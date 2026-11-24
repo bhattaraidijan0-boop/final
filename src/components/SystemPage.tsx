@@ -2,28 +2,29 @@ import { FormEvent, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Activity,
-  AlertTriangle,
   Award,
   Bell,
   Castle,
+  CheckCircle2,
+  Clock,
   Compass,
   Eye,
-  FileText,
   Fingerprint,
   LineChart,
   MessageSquare,
   Send,
-  ShieldAlert,
+  ShieldCheck,
   Swords,
   Target,
   TrendingUp,
   Trophy,
   X,
+  XCircle,
 } from 'lucide-react';
 import {
+  ChallengeClaimRequest,
   ConfidenceLevel,
   DqrUser,
-  EgoReport,
   QuizRecord,
   RankDef,
   RivalRecord,
@@ -48,14 +49,14 @@ interface SystemPageProps {
   predictions: SystemPrediction[];
   guidance: SystemGuidanceItem[];
   challenges: SystemChallenge[];
-  egoReports: EgoReport[];
+  challengeClaims: ChallengeClaimRequest[];
   verdict: VerdictRecord | undefined;
   quizzes: QuizRecord[];
   territories: Territory[];
   rivalries: RivalRecord[];
   onSendMessage: (userId: string, text: string) => void;
   onMarkMessagesRead: (userId: string) => void;
-  onClaimChallenge: (challengeId: string, userId: string) => void;
+  onClaimChallenge: (challengeId: string, userId: string, note?: string) => void;
   onSendRivalRequest: (requesterId: string, recipientId: string) => string | null;
   onRespondRivalRequest: (rivalryId: string, accept: boolean) => void;
   onCancelRivalRequest: (rivalryId: string) => void;
@@ -96,7 +97,7 @@ export function SystemPage({
   predictions,
   guidance,
   challenges,
-  egoReports,
+  challengeClaims,
   verdict,
   quizzes,
   territories,
@@ -115,7 +116,10 @@ export function SystemPage({
     useState<SystemPrediction | null>(null);
   const [selectedChallenge, setSelectedChallenge] =
     useState<SystemChallenge | null>(null);
-  const [selectedReport, setSelectedReport] = useState<EgoReport | null>(null);
+  const [claimNoteInput, setClaimNoteInput] = useState('');
+  const [challengeFilter, setChallengeFilter] = useState<
+    'all' | 'open' | 'pending' | 'verified'
+  >('all');
 
   const todayStr = new Date().toISOString().slice(0, 10);
 
@@ -178,13 +182,41 @@ export function SystemPage({
     [challenges, currentUser.id]
   );
 
-  const userReports = useMemo(
+  const userClaimMap = useMemo(() => {
+    const map = new Map<string, ChallengeClaimRequest>();
+    const sorted = [...challengeClaims]
+      .filter((cl) => cl.userId === currentUser.id)
+      .sort((a, b) => b.submittedAt - a.submittedAt);
+    for (const cl of sorted) {
+      if (!map.has(cl.challengeId)) {
+        map.set(cl.challengeId, cl);
+      }
+    }
+    return map;
+  }, [challengeClaims, currentUser.id]);
+
+  const userPendingClaimCount = useMemo(
     () =>
-      egoReports
-        .filter((r) => r.published && r.targetUserId === currentUser.id)
-        .sort((a, b) => b.publishedAt.localeCompare(a.publishedAt)),
-    [egoReports, currentUser.id]
+      visibleChallenges.filter(
+        (c) =>
+          !c.completedByUserIds.includes(currentUser.id) &&
+          userClaimMap.get(c.id)?.status === 'pending'
+      ).length,
+    [visibleChallenges, userClaimMap, currentUser.id]
   );
+
+  const filteredChallenges = useMemo(() => {
+    return visibleChallenges.filter((chl) => {
+      const completed = chl.completedByUserIds.includes(currentUser.id);
+      const claimStatus = userClaimMap.get(chl.id)?.status;
+      if (challengeFilter === 'verified') return completed;
+      if (challengeFilter === 'pending')
+        return !completed && claimStatus === 'pending';
+      if (challengeFilter === 'open')
+        return !completed && claimStatus !== 'pending' && chl.status !== 'EXPIRED';
+      return true;
+    });
+  }, [visibleChallenges, challengeFilter, currentUser.id, userClaimMap]);
 
   // Real user performance calculations for Guidance & Challenge verification
   const userStats = useMemo(() => {
@@ -246,14 +278,8 @@ export function SystemPage({
     {
       id: 'challenges',
       label: 'Challenges',
-      desc: 'Prove your potential · Active tests',
+      desc: 'Prove your potential · Submit claims for XP verification',
       icon: Target,
-    },
-    {
-      id: 'ego-reports',
-      label: 'Ego Reports',
-      desc: 'Periodic competitive evaluations',
-      icon: FileText,
     },
     {
       id: 'verdict',
@@ -313,10 +339,10 @@ export function SystemPage({
             <button
               type="button"
               onClick={() => handleOpenSubTab('overview')}
-              className={`rounded-lg border px-3.5 py-2 font-mono text-xs font-semibold transition-all cursor-pointer ${
+              className={`relative rounded-lg border px-3.5 py-2 font-mono text-xs font-semibold transition-all cursor-pointer ${
                 subTab === 'overview'
-                  ? 'border-[#3988FF] bg-[#3988FF]/15 text-[#83B9FF]'
-                  : 'border-white/10 bg-[#111827] text-[#929CAF] hover:text-white'
+                  ? 'border-[#3988FF] bg-[#3988FF]/15 text-[#83B9FF] shadow-[0_0_16px_rgba(57,136,255,0.18)]'
+                  : 'border-white/10 bg-[#111827] text-[#929CAF] hover:border-[#3988FF]/40 hover:text-white'
               }`}
             >
               Overview
@@ -329,7 +355,7 @@ export function SystemPage({
                   key={c.id}
                   type="button"
                   onClick={() => handleOpenSubTab(c.id)}
-                  className={`inline-flex items-center gap-2 rounded-lg border px-3.5 py-2 font-mono text-xs font-semibold transition-all cursor-pointer ${
+                  className={`relative inline-flex items-center gap-2 rounded-lg border px-3.5 py-2 font-mono text-xs font-semibold transition-all cursor-pointer ${
                     active
                       ? 'border-[#3988FF] bg-[#3988FF]/15 text-[#83B9FF] shadow-[0_0_16px_rgba(57,136,255,0.18)]'
                       : 'border-white/10 bg-[#111827] text-[#929CAF] hover:border-[#3988FF]/40 hover:text-white'
@@ -337,6 +363,11 @@ export function SystemPage({
                 >
                   <Icon className="h-3.5 w-3.5" />
                   <span>{c.label}</span>
+                  {c.id === 'challenges' && userPendingClaimCount > 0 && (
+                    <span className="rounded bg-amber-400/20 px-1.5 py-0.5 font-mono text-[10px] font-bold text-amber-300 tabular-nums">
+                      {userPendingClaimCount} Pending
+                    </span>
+                  )}
                   {c.id === 'rival' && incomingRivalRequestCount > 0 && (
                     <span className="font-mono text-[11px] font-bold text-[#A78BFA] tabular-nums">
                       ({incomingRivalRequestCount})
@@ -358,6 +389,7 @@ export function SystemPage({
               initial={{ opacity: 0, y: 14 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
               className="space-y-8"
             >
               {/* Welcome Panel */}
@@ -453,14 +485,16 @@ export function SystemPage({
 
                 <div className="rounded-2xl border border-[#3988FF]/30 bg-[#111827] p-5">
                   <p className="font-mono text-[11px] font-bold text-[#3988FF] uppercase">
-                    Latest Ego Report
+                    System Verdict &amp; Claims
                   </p>
                   <p className="mt-2 font-semibold text-white">
-                    {userReports[0]?.title || 'No evaluation issued yet.'}
+                    {verdict?.classification || 'Unassigned Competitive Verdict'}
                   </p>
                   <p className="mt-1 text-xs text-[#929CAF]">
-                    {userReports[0]?.shortPreview ||
-                      'Administration has not filed a cycle evaluation yet.'}
+                    {userPendingClaimCount > 0
+                      ? `${userPendingClaimCount} challenge XP claim${userPendingClaimCount === 1 ? '' : 's'} awaiting Admin verification.`
+                      : verdict?.description ||
+                        'Open System Verdict or submit Challenge XP claims for verification.'}
                   </p>
                 </div>
               </div>
@@ -813,134 +847,152 @@ export function SystemPage({
               initial={{ opacity: 0, y: 14 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
               className="space-y-7"
             >
-              <div>
-                <h2 className="font-mono text-2xl font-bold text-[#83B9FF]">
-                  YOUR NEXT TEST
-                </h2>
-                <p className="mt-1 text-xs text-[#929CAF]">
-                  Potential means nothing without proof.
-                </p>
-              </div>
+              <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+                <div>
+                  <h2 className="font-mono text-2xl font-bold text-[#83B9FF]">
+                    YOUR NEXT TEST
+                  </h2>
+                  <p className="mt-1 text-xs text-[#929CAF]">
+                    Potential means nothing without proof. Submitted XP claims
+                    enter Admin verification before XP is granted.
+                  </p>
+                </div>
 
-              <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
-                {visibleChallenges.map((chl) => {
-                  const completedByUser = chl.completedByUserIds.includes(
-                    currentUser.id
-                  );
-                  const effectiveStatus = completedByUser
-                    ? 'COMPLETED'
-                    : chl.status;
-
-                  return (
-                    <motion.div
-                      key={chl.id}
-                      whileHover={{ y: -4 }}
-                      onClick={() => setSelectedChallenge(chl)}
-                      className="flex cursor-pointer flex-col justify-between rounded-2xl border border-[#3988FF]/30 bg-[#151D2C] p-5 transition-colors hover:border-[#83B9FF]"
+                <div className="flex flex-wrap gap-1.5 rounded-xl border border-white/10 bg-[#111827] p-1">
+                  {(
+                    [
+                      { id: 'all', label: 'All' },
+                      { id: 'open', label: 'Open' },
+                      {
+                        id: 'pending',
+                        label: `Pending (${userPendingClaimCount})`,
+                      },
+                      { id: 'verified', label: 'Verified' },
+                    ] as const
+                  ).map((f) => (
+                    <button
+                      key={f.id}
+                      type="button"
+                      onClick={() => setChallengeFilter(f.id)}
+                      className={`rounded-lg px-3 py-1.5 font-mono text-[11px] font-semibold transition-all cursor-pointer ${
+                        challengeFilter === f.id
+                          ? 'bg-[#3988FF] text-white shadow-sm'
+                          : 'text-[#929CAF] hover:text-white'
+                      }`}
                     >
-                      <div>
-                        <div className="flex items-center justify-between font-mono text-[11px]">
-                          <span className="text-[#A78BFA]">
-                            {chl.category} · {chl.difficulty}
-                          </span>
-                          <span
-                            className={
-                              effectiveStatus === 'COMPLETED'
-                                ? 'text-emerald-400'
-                                : effectiveStatus === 'EXPIRED'
-                                  ? 'text-[#EF4444]'
-                                  : 'text-[#83B9FF]'
-                            }
-                          >
-                            {effectiveStatus}
-                          </span>
-                        </div>
-                        <h3 className="mt-2.5 font-display text-lg font-bold text-white">
-                          {chl.title}
-                        </h3>
-                        <p className="mt-2 text-xs leading-relaxed text-[#929CAF]">
-                          {chl.description}
-                        </p>
-                      </div>
-
-                      <div className="mt-5 border-t border-white/10 pt-3 font-mono text-xs">
-                        <div className="flex justify-between text-[#83B9FF]">
-                          <span>Reward: +{chl.rewardXp} XP</span>
-                          <span>Due: {chl.deadline}</span>
-                        </div>
-                      </div>
-                    </motion.div>
-                  );
-                })}
-              </div>
-            </motion.div>
-          )}
-
-          {/* ================= 5. EGO REPORTS ================= */}
-          {subTab === 'ego-reports' && (
-            <motion.div
-              key="ego"
-              initial={{ opacity: 0, y: 14 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              className="space-y-7"
-            >
-              <div>
-                <h2 className="font-mono text-2xl font-bold text-[#83B9FF]">
-                  EGO EVALUATION
-                </h2>
-                <p className="mt-1 text-xs text-[#929CAF]">
-                  An assessment of your competitive identity. Confidential to{' '}
-                  {currentUser.fullName}.
-                </p>
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
               </div>
 
-              {userReports.length === 0 ? (
-                <div className="rounded-2xl border border-white/10 bg-[#111827] p-12 text-center text-sm text-[#929CAF]">
-                  No Ego Evaluation reports have been filed for you yet.
+              {filteredChallenges.length === 0 ? (
+                <div className="rounded-2xl border border-white/10 bg-[#111827] p-10 text-center text-sm text-[#929CAF]">
+                  No challenges match this filter right now.
                 </div>
               ) : (
-                <div className="grid gap-5 md:grid-cols-2">
-                  {userReports.map((rep) => (
-                    <motion.button
-                      key={rep.id}
-                      type="button"
-                      whileHover={{ y: -4 }}
-                      onClick={() => setSelectedReport(rep)}
-                      className="rounded-2xl border border-[#3988FF]/35 bg-[#151D2C] p-6 text-left transition-colors hover:border-[#3988FF] cursor-pointer"
-                    >
-                      <div className="flex items-center justify-between font-mono text-xs text-[#3988FF]">
-                        <span>{rep.reportNumber}</span>
-                        <span className="text-[#929CAF]">{rep.publishedAt}</span>
-                      </div>
-                      <h3 className="mt-2 font-display text-xl font-bold text-white">
-                        {rep.title}
-                      </h3>
-                      <p className="mt-1 font-mono text-[11px] text-[#A78BFA]">
-                        Period: {rep.period}
-                      </p>
-                      <p className="mt-3 text-xs leading-relaxed text-[#929CAF]">
-                        {rep.shortPreview}
-                      </p>
-                      <p className="mt-4 font-mono text-xs font-bold text-[#83B9FF]">
-                        Open Confidential Report →
-                      </p>
-                    </motion.button>
-                  ))}
+                <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
+                  {filteredChallenges.map((chl) => {
+                    const completedByUser = chl.completedByUserIds.includes(
+                      currentUser.id
+                    );
+                    const latestClaim = userClaimMap.get(chl.id);
+                    const isPending =
+                      !completedByUser && latestClaim?.status === 'pending';
+                    const isRejected =
+                      !completedByUser && latestClaim?.status === 'rejected';
+
+                    const statusBadge = completedByUser
+                      ? {
+                          label: 'VERIFIED · COMPLETED',
+                          cls: 'text-emerald-300 border-emerald-400/35 bg-emerald-500/10',
+                        }
+                      : isPending
+                        ? {
+                            label: 'PENDING ADMIN VERIFICATION',
+                            cls: 'text-amber-300 border-amber-400/35 bg-amber-500/10',
+                          }
+                        : isRejected
+                          ? {
+                              label: 'REJECTED · RETRY',
+                              cls: 'text-rose-300 border-rose-400/35 bg-rose-500/10',
+                            }
+                          : chl.status === 'EXPIRED'
+                            ? {
+                                label: 'EXPIRED',
+                                cls: 'text-[#EF4444] border-[#EF4444]/35 bg-[#EF4444]/10',
+                              }
+                            : {
+                                label: chl.status,
+                                cls: 'text-[#83B9FF] border-[#3988FF]/35 bg-[#3988FF]/10',
+                              };
+
+                    return (
+                      <motion.div
+                        key={chl.id}
+                        whileHover={{ y: -4 }}
+                        transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+                        onClick={() => {
+                          setClaimNoteInput('');
+                          setSelectedChallenge(chl);
+                        }}
+                        className={`flex cursor-pointer flex-col justify-between rounded-2xl border p-5 transition-colors ${
+                          isPending
+                            ? 'border-amber-400/45 bg-[#151D2C] hover:border-amber-300'
+                            : completedByUser
+                              ? 'border-emerald-400/35 bg-[#111e1d] hover:border-emerald-300'
+                              : 'border-[#3988FF]/30 bg-[#151D2C] hover:border-[#83B9FF]'
+                        }`}
+                      >
+                        <div>
+                          <div className="flex flex-wrap items-center justify-between gap-2 font-mono text-[11px]">
+                            <span className="text-[#A78BFA]">
+                              {chl.category} · {chl.difficulty}
+                            </span>
+                            <span
+                              className={`rounded-md border px-2 py-0.5 text-[10px] font-bold ${statusBadge.cls}`}
+                            >
+                              {statusBadge.label}
+                            </span>
+                          </div>
+                          <h3 className="mt-2.5 font-display text-lg font-bold text-white">
+                            {chl.title}
+                          </h3>
+                          <p className="mt-2 text-xs leading-relaxed text-[#929CAF]">
+                            {chl.description}
+                          </p>
+                          {isRejected && latestClaim?.adminNote && (
+                            <p className="mt-2.5 rounded-lg border border-rose-400/25 bg-rose-500/10 px-2.5 py-1.5 text-[11px] text-rose-200">
+                              Admin Note: {latestClaim.adminNote}
+                            </p>
+                          )}
+                        </div>
+
+                        <div className="mt-5 border-t border-white/10 pt-3 font-mono text-xs">
+                          <div className="flex items-center justify-between text-[#83B9FF]">
+                            <span>Reward: +{chl.rewardXp} XP</span>
+                            <span>Due: {chl.deadline}</span>
+                          </div>
+                        </div>
+                      </motion.div>
+                    );
+                  })}
                 </div>
               )}
             </motion.div>
           )}
 
-          {/* ================= 6. SYSTEM VERDICT ================= */}
+          {/* ================= 5. SYSTEM VERDICT ================= */}
           {subTab === 'verdict' && (
             <motion.div
               key="verdict"
               initial={{ opacity: 0, y: 14 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
               className="space-y-6"
             >
               <div>
@@ -1118,156 +1170,151 @@ export function SystemPage({
 
       {/* CHALLENGE DETAIL MODAL */}
       <AnimatePresence>
-        {selectedChallenge && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={() => setSelectedChallenge(null)}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
-          >
+        {selectedChallenge && (() => {
+          const isCompleted = selectedChallenge.completedByUserIds.includes(
+            currentUser.id
+          );
+          const latestClaim = userClaimMap.get(selectedChallenge.id);
+          const isPending = !isCompleted && latestClaim?.status === 'pending';
+          const isRejected = !isCompleted && latestClaim?.status === 'rejected';
+
+          return (
             <motion.div
-              initial={{ opacity: 0, scale: 0.94 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.94 }}
-              onClick={(e) => e.stopPropagation()}
-              className="w-full max-w-lg rounded-2xl border border-[#3988FF]/50 bg-[#111827] p-6 text-white"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.22 }}
+              onClick={() => setSelectedChallenge(null)}
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
             >
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="font-mono text-xs font-bold text-[#A78BFA]">
-                    {selectedChallenge.category} ·{' '}
-                    {selectedChallenge.difficulty}
-                  </p>
-                  <h3 className="mt-1 font-display text-2xl font-bold">
-                    {selectedChallenge.title}
-                  </h3>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setSelectedChallenge(null)}
-                  className="rounded-lg p-1 text-white/60 hover:text-white cursor-pointer"
-                >
-                  <X className="h-5 w-5" />
-                </button>
-              </div>
-
-              <p className="mt-3 text-sm text-[#E5E7EB]">
-                {selectedChallenge.description}
-              </p>
-
-              <div className="mt-4 space-y-2 rounded-xl bg-[#090B12] p-4 font-mono text-xs">
-                <p>Requirement: {selectedChallenge.requirementText}</p>
-                <p className="text-[#83B9FF]">
-                  Reward: +{selectedChallenge.rewardXp} XP
-                </p>
-                <p className="text-[#929CAF]">
-                  Deadline: {selectedChallenge.deadline}
-                </p>
-              </div>
-
-              {!selectedChallenge.completedByUserIds.includes(
-                currentUser.id
-              ) &&
-                selectedChallenge.status !== 'EXPIRED' && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 10 }}
+                transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+                onClick={(e) => e.stopPropagation()}
+                className="w-full max-w-lg rounded-2xl border border-[#3988FF]/50 bg-[#111827] p-6 text-white shadow-2xl"
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="font-mono text-xs font-bold text-[#A78BFA]">
+                      {selectedChallenge.category} ·{' '}
+                      {selectedChallenge.difficulty}
+                    </p>
+                    <h3 className="mt-1 font-display text-2xl font-bold">
+                      {selectedChallenge.title}
+                    </h3>
+                  </div>
                   <button
                     type="button"
-                    onClick={() => {
-                      onClaimChallenge(selectedChallenge.id, currentUser.id);
-                      setSelectedChallenge(null);
-                    }}
-                    className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-[#3988FF] py-2.5 text-xs font-bold text-white hover:bg-[#83B9FF] hover:text-[#090B12] cursor-pointer"
+                    onClick={() => setSelectedChallenge(null)}
+                    className="rounded-lg p-1 text-white/60 hover:text-white cursor-pointer"
                   >
-                    <Award className="h-4 w-4" />
-                    <span>Verify & Claim Reward</span>
+                    <X className="h-5 w-5" />
                   </button>
+                </div>
+
+                <p className="mt-3 text-sm text-[#E5E7EB]">
+                  {selectedChallenge.description}
+                </p>
+
+                <div className="mt-4 space-y-2 rounded-xl bg-[#090B12] p-4 font-mono text-xs">
+                  <p>Requirement: {selectedChallenge.requirementText}</p>
+                  <p className="text-[#83B9FF]">
+                    Reward: +{selectedChallenge.rewardXp} XP
+                  </p>
+                  <p className="text-[#929CAF]">
+                    Deadline: {selectedChallenge.deadline}
+                  </p>
+                </div>
+
+                {isCompleted && (
+                  <div className="mt-5 flex items-center gap-2.5 rounded-xl border border-emerald-400/40 bg-emerald-500/10 p-3.5 text-xs text-emerald-200">
+                    <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-300" />
+                    <span>
+                      Verified by Admin · +{selectedChallenge.rewardXp} XP has
+                      been credited to your account.
+                    </span>
+                  </div>
                 )}
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
-      {/* FULL EGO REPORT MODAL */}
-      <AnimatePresence>
-        {selectedReport && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={() => setSelectedReport(null)}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4 backdrop-blur-sm"
-          >
-            <motion.div
-              initial={{ opacity: 0, scale: 0.94 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.94 }}
-              onClick={(e) => e.stopPropagation()}
-              className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-[#3988FF]/55 bg-[#0e1422] p-6 text-white sm:p-8"
-            >
-              <div className="flex items-start justify-between gap-4 border-b border-white/10 pb-4">
-                <div>
-                  <p className="font-mono text-xs font-bold text-[#3988FF]">
-                    CONFIDENTIAL DOSSIER · {selectedReport.reportNumber}
-                  </p>
-                  <h3 className="mt-1 font-display text-2xl font-bold">
-                    {selectedReport.title}
-                  </h3>
-                  <p className="mt-1 font-mono text-xs text-[#929CAF]">
-                    {selectedReport.period} · Issued {selectedReport.publishedAt}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setSelectedReport(null)}
-                  className="rounded-lg p-1.5 text-white/60 hover:text-white cursor-pointer"
-                >
-                  <X className="h-5 w-5" />
-                </button>
-              </div>
-
-              <div className="mt-6 space-y-4">
-                {[
-                  {
-                    heading: 'A. Overall Assessment',
-                    body: selectedReport.overallAssessment,
-                  },
-                  { heading: 'B. Strengths', body: selectedReport.strengths },
-                  { heading: 'C. Weaknesses', body: selectedReport.weaknesses },
-                  {
-                    heading: 'D. Competitive Standing',
-                    body: selectedReport.competitiveStanding,
-                  },
-                  {
-                    heading: 'E. Progression',
-                    body: selectedReport.progression,
-                  },
-                ].map((sec) => (
-                  <div
-                    key={sec.heading}
-                    className="rounded-xl border border-white/10 bg-[#111827] p-4"
-                  >
-                    <p className="font-mono text-xs font-bold text-[#83B9FF] uppercase">
-                      {sec.heading}
+                {isPending && latestClaim && (
+                  <div className="mt-5 space-y-1.5 rounded-xl border border-amber-400/40 bg-amber-500/10 p-4 text-xs text-amber-100">
+                    <div className="flex items-center gap-2 font-mono font-bold text-amber-300">
+                      <Clock className="h-4 w-4" />
+                      <span>PENDING ADMIN VERIFICATION</span>
+                    </div>
+                    <p className="text-amber-100/80">
+                      Submitted {new Date(latestClaim.submittedAt).toLocaleString()}.
+                      XP will be awarded once an Administrator verifies your claim.
                     </p>
-                    <p className="mt-1.5 text-sm leading-relaxed text-[#E5E7EB]">
-                      {sec.body}
-                    </p>
+                    {latestClaim.note && (
+                      <p className="rounded-lg bg-black/30 px-2.5 py-1.5 text-[11px] text-amber-100">
+                        Your note: {latestClaim.note}
+                      </p>
+                    )}
                   </div>
-                ))}
+                )}
 
-                <div className="rounded-xl border border-[#3988FF]/60 bg-[#151D2C] p-5">
-                  <div className="flex items-center gap-2 font-mono text-xs font-bold text-[#3988FF] uppercase">
-                    <ShieldAlert className="h-4 w-4" />
-                    <span>F. Final Verdict</span>
-                  </div>
-                  <p className="mt-2 font-mono text-sm font-bold leading-relaxed text-white">
-                    {selectedReport.finalVerdict}
-                  </p>
-                </div>
-              </div>
+                {!isCompleted &&
+                  !isPending &&
+                  selectedChallenge.status !== 'EXPIRED' && (
+                    <div className="mt-5 space-y-3">
+                      {isRejected && latestClaim && (
+                        <div className="flex items-start gap-2 rounded-xl border border-rose-400/35 bg-rose-500/10 p-3 text-xs text-rose-200">
+                          <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-300" />
+                          <div>
+                            <p className="font-mono font-bold">
+                              Previous Claim Not Approved
+                            </p>
+                            {latestClaim.adminNote && (
+                              <p className="mt-0.5 text-rose-100/90">
+                                {latestClaim.adminNote}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      <div>
+                        <label className="mb-1 block font-mono text-[11px] text-[#929CAF]">
+                          Verification Note / Proof (optional)
+                        </label>
+                        <input
+                          type="text"
+                          value={claimNoteInput}
+                          onChange={(e) => setClaimNoteInput(e.target.value)}
+                          placeholder="e.g. Held Shadow Citadel today / reached 14-day streak..."
+                          className="w-full rounded-xl border border-[#3988FF]/30 bg-[#090B12] px-3.5 py-2 text-xs text-white placeholder-[#929CAF]/70 focus:border-[#3988FF] focus:outline-none"
+                        />
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onClaimChallenge(
+                            selectedChallenge.id,
+                            currentUser.id,
+                            claimNoteInput
+                          );
+                          setClaimNoteInput('');
+                          setSelectedChallenge(null);
+                        }}
+                        className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#3988FF] py-2.5 text-xs font-bold text-white transition-colors hover:bg-[#83B9FF] hover:text-[#090B12] cursor-pointer"
+                      >
+                        <ShieldCheck className="h-4 w-4" />
+                        <span>
+                          {isRejected
+                            ? 'Resubmit Claim for Verification'
+                            : 'Claim XP (Submit for Admin Verification)'}
+                        </span>
+                      </button>
+                    </div>
+                  )}
+              </motion.div>
             </motion.div>
-          </motion.div>
-        )}
+          );
+        })()}
       </AnimatePresence>
     </div>
   );
