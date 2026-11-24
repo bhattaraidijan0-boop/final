@@ -1,7 +1,6 @@
 import {
   AuctionItem,
   DqrUser,
-  EgoReport,
   GalleryPhoto,
   IntroSettings,
   NewspaperEdition,
@@ -123,7 +122,7 @@ export const INITIAL_USERS: DqrUser[] = [
     rankId: 'rk-semi-special',
     streak: 11,
     tagline: 'Quiet consistency builds unstoppable momentum.',
-    announcement: 'New Ego Evaluation report published in System.',
+    announcement: 'New System Challenges open for claim & verification.',
     announcementChecked: false,
     ownedTitleIds: ['ttl-preset-4', 'ttl-preset-12'],
     equippedTitleId: 'ttl-preset-4',
@@ -614,7 +613,7 @@ export const INITIAL_NEWSPAPER: NewspaperEdition = {
     'Across the district auditorium this week, months of quiet preparation became unmistakable stage composure. Rather than relying on frantic overnight revision, top-ranked DQR challengers leaned on structured daily study habits—converting five to ten focused minutes each day into decisive buzzer speed during the third and fourth tie-breaker rounds.\n\nMeanwhile, the Territory arena saw renewed pressure on The Shadow Citadel and Astral Observatory as emerging Grade contenders logged consecutive streaks and higher accuracy ratings.',
   sideTitle: 'Inside This Edition',
   sideBody:
-    '• Dijan Bhattarai extends unbroken study streak past 40 days.\n• Aarav Sharma holds Astral Observatory with 8/10 benchmark.\n• Sanctum of Heritage remains unclaimed—open to all eligible challengers.\n• System Ego Reports now live for active members.',
+    '• Dijan Bhattarai extends unbroken study streak past 40 days.\n• Aarav Sharma holds Astral Observatory with 8/10 benchmark.\n• Sanctum of Heritage remains unclaimed—open to all eligible challengers.\n• System Challenge verification queue now active for members.',
   quoteText:
     'Potential is silent until pressure arrives. Consistency turns small daily actions into unmistakable authority.',
   quoteAuthor: 'Dijan Bhattarai, Founder of DQR',
@@ -787,74 +786,6 @@ export const INITIAL_CHALLENGES: SystemChallenge[] = [
   },
 ];
 
-export const INITIAL_EGO_REPORTS: EgoReport[] = [
-  {
-    id: 'ego-1',
-    reportNumber: 'EGO-2082-04',
-    title: 'Quarterly Competitive Evaluation — Cycle IV',
-    publishedAt: '2026-11-18',
-    period: 'Kartik – Mangsir 2082 B.S.',
-    shortPreview: 'Consistency has stabilized; conversion under final-round pressure remains the separator.',
-    targetUserId: 'usr-admin-1',
-    overallAssessment:
-      'You have maintained dominant podium regularity across district competitions while keeping an unbroken 42-day discipline streak.',
-    strengths:
-      'World History recall, rapid buzzer reaction speed, and control of The Shadow Citadel (9/10).',
-    weaknesses:
-      'Occasional over-aggression in literature tie-breakers when a calculated pause yields cleaner accuracy.',
-    competitiveStanding:
-      'Currently ranked #1 in District Standings and holding Supreme Grade authority.',
-    progression:
-      '+18% improvement in rapid-fire conversion compared with Cycle III.',
-    finalVerdict:
-      'YOU HAVE DEMONSTRATED AUTHORITY. DO NOT MISTAKE EARLY LEAD FOR PERMANENCE. GUARD YOUR TERRITORIES.',
-    published: true,
-  },
-  {
-    id: 'ego-2',
-    reportNumber: 'EGO-2082-05',
-    title: 'Quarterly Competitive Evaluation — Cycle IV',
-    publishedAt: '2026-11-19',
-    period: 'Kartik – Mangsir 2082 B.S.',
-    shortPreview: 'Potential is visible in STEM rounds; broader humanities coverage is required.',
-    targetUserId: 'usr-member-1',
-    overallAssessment:
-      'Strong analytical foundation demonstrated through seizing Astral Observatory and consistent podium appearances.',
-    strengths:
-      'Physics, astronomy, and calm problem decomposition under timed quizzes.',
-    weaknesses:
-      'Humanities and historical dates still create narrow point deficits in mixed-category finals.',
-    competitiveStanding:
-      'Solid top-tier challenger holding Special Grade and 100 Territory Power.',
-    progression:
-      'Advanced 3 levels over the past cycle with an 18-day streak.',
-    finalVerdict:
-      'YOU HAVE DEMONSTRATED POTENTIAL. BUT POTENTIAL IS NOT ACHIEVEMENT. CONVERT CONSISTENCY INTO SUPERIORITY.',
-    published: true,
-  },
-  {
-    id: 'ego-3',
-    reportNumber: 'EGO-2082-06',
-    title: 'Quarterly Competitive Evaluation — Cycle IV',
-    publishedAt: '2026-11-20',
-    period: 'Kartik – Mangsir 2082 B.S.',
-    shortPreview: 'Steady composure in finals; initiative in Territory challenges is overdue.',
-    targetUserId: 'usr-member-2',
-    overallAssessment:
-      'Reliable performer in humanities and literature rounds with an emerging 11-day study streak.',
-    strengths:
-      'Literature, cultural heritage, and poised team communication.',
-    weaknesses:
-      'Hesitation on high-risk buzzer questions and zero active Territory holdings.',
-    competitiveStanding:
-      'Semi-Special Grade contender poised for rapid upward movement upon claiming Territory #03.',
-    progression:
-      'Crossed the 10-day streak band; accuracy steady above 85% in heritage rounds.',
-    finalVerdict:
-      'QUIET COMPETENCE IS NOT ENOUGH. STEP INTO THE ARENA AND CLAIM A TERRITORY.',
-    published: true,
-  },
-];
 
 export const INITIAL_VERDICTS: VerdictRecord[] = [
   {
