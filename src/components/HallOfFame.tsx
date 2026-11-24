@@ -71,6 +71,39 @@ function getPlayerQuizRating(quiz: QuizRecord, playerName: string): number {
   return Math.min(10, Math.max(1, Math.round((quiz.rating || 8) * 10) / 10));
 }
 
+function formatBareMinimumPlacements(
+  targetPoints: number,
+  quizSlots: number
+): string {
+  if (targetPoints <= 0 || quizSlots <= 0) return '0 points needed';
+  const firstCount = Math.floor(targetPoints / 6);
+  const rem = targetPoints % 6;
+  const remLabel =
+    rem === 5
+      ? '2nd'
+      : rem === 4
+        ? '3rd'
+        : rem === 3
+          ? '4th'
+          : rem === 2
+            ? '5th'
+            : rem === 1
+              ? '6th'
+              : '';
+  const usedSlots = firstCount + (rem > 0 ? 1 : 0);
+  const leftover = Math.max(0, quizSlots - usedSlots);
+
+  const parts: string[] = [];
+  if (firstCount > 0) parts.push(`${firstCount} 1st`);
+  if (rem > 0) parts.push(`1 ${remLabel}`);
+  if (leftover > 0) parts.push(`${leftover} Not Qualified`);
+
+  if (parts.length === 0) return '0 points needed';
+  if (parts.length === 1) return parts[0];
+  if (parts.length === 2) return `${parts[0]} and ${parts[1]}`;
+  return `${parts.slice(0, -1).join(', ')}, and ${parts[parts.length - 1]}`;
+}
+
 export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
   const [subTab, setSubTab] = useState<
     HofSubTab | 'head-to-head' | 'era-streaks' | 'season-wrapped'
@@ -110,6 +143,7 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
   const [wrappedYear, setWrappedYear] = useState<string>(
     () => bsYears[bsYears.length - 1] || 'all'
   );
+  const [wrappedPlayer, setWrappedPlayer] = useState<string>('squad');
   const [wrappedSlide, setWrappedSlide] = useState<number>(0);
 
   useEffect(() => {
@@ -427,6 +461,7 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
       let qualified = 0;
       let notQualified = 0;
       let totalQuizzes = 0;
+      let totalPoints = 0;
       let ratingSum = 0;
       const list: QuizRecord[] = [];
 
@@ -434,6 +469,7 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
         const played = q.players.some((p) => p.trim().toLowerCase() === target);
         if (!played) continue;
         totalQuizzes += 1;
+        totalPoints += POSITION_POINTS[q.position] ?? 0;
         ratingSum += getPlayerQuizRating(q, playerName);
         list.push(q);
         if (q.position === 'Not Qualified') {
@@ -454,6 +490,8 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
         totalQuizzes > 0 ? Math.round((podiums / totalQuizzes) * 100) : 0;
       const avgRating =
         totalQuizzes > 0 ? Math.round((ratingSum / totalQuizzes) * 10) / 10 : 0;
+      const avgPoints =
+        totalQuizzes > 0 ? Math.round((totalPoints / totalQuizzes) * 100) / 100 : 0;
 
       return {
         name: playerName,
@@ -465,6 +503,8 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
         qualified,
         notQualified,
         totalQuizzes,
+        totalPoints,
+        avgPoints,
         qualRate,
         podiumRate,
         avgRating,
@@ -498,7 +538,64 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
           )
         : 0;
 
-    return { a, b, sharedQuizzes, sharedWins, sharedPodiums, sharedQualRate };
+    // Catch-up / Pace Benchmark (Pure placement points only, excludes +3 award bonuses)
+    const maxQuizzes = Math.max(a.totalQuizzes, b.totalQuizzes);
+    const hasUnequalQuizzes = a.totalQuizzes !== b.totalQuizzes;
+    const chaser = a.totalQuizzes < b.totalQuizzes ? a : b;
+    const paceSetter = a.totalQuizzes < b.totalQuizzes ? b : a;
+    const remainingQuizzes = paceSetter.totalQuizzes - chaser.totalQuizzes;
+    const pointsToTie = Math.max(0, paceSetter.totalPoints - chaser.totalPoints);
+    const pointsToBeat = paceSetter.totalPoints - chaser.totalPoints + 1;
+    const maxAchievableInRemaining = remainingQuizzes * 6;
+
+    let catchUpStatus:
+      | 'same-player'
+      | 'equal-quizzes'
+      | 'chaser-already-ahead'
+      | 'reachable'
+      | 'unreachable' = 'equal-quizzes';
+
+    if (targetA === targetB) {
+      catchUpStatus = 'same-player';
+    } else if (!hasUnequalQuizzes) {
+      catchUpStatus = 'equal-quizzes';
+    } else if (chaser.totalPoints > paceSetter.totalPoints) {
+      catchUpStatus = 'chaser-already-ahead';
+    } else if (pointsToBeat > maxAchievableInRemaining) {
+      catchUpStatus = 'unreachable';
+    } else {
+      catchUpStatus = 'reachable';
+    }
+
+    const avgPointsNeeded =
+      remainingQuizzes > 0 && pointsToBeat > 0
+        ? Math.round((pointsToBeat / remainingQuizzes) * 100) / 100
+        : 0;
+    const bareMinimumText =
+      catchUpStatus === 'reachable'
+        ? formatBareMinimumPlacements(pointsToBeat, remainingQuizzes)
+        : '';
+
+    return {
+      a,
+      b,
+      sharedQuizzes,
+      sharedWins,
+      sharedPodiums,
+      sharedQualRate,
+      catchUp: {
+        status: catchUpStatus,
+        maxQuizzes,
+        chaser,
+        paceSetter,
+        remainingQuizzes,
+        pointsToTie,
+        pointsToBeat: Math.max(0, pointsToBeat),
+        avgPointsNeeded,
+        bareMinimumText,
+        maxPossibleTotal: chaser.totalPoints + maxAchievableInRemaining,
+      },
+    };
   }, [quizzes, h2hYear, h2hPlayerA, h2hPlayerB]);
 
   const careerProfile = useMemo(() => {
@@ -1228,6 +1325,404 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
 
     const link = document.createElement('a');
     link.download = `DQR-Season-Wrapped-${wrappedYear === 'all' ? 'All-Time' : wrappedYear}.png`;
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+  };
+
+  const individualWrappedData = useMemo(() => {
+    if (wrappedPlayer === 'squad') return null;
+    const normalized = wrappedYear.trim();
+    const target = wrappedPlayer.trim().toLowerCase();
+
+    const seasonScoped = (
+      normalized === 'all'
+        ? quizzes
+        : quizzes.filter((q) => (q.yearBS || '').trim() === normalized)
+    )
+      .slice()
+      .sort(
+        (a, b) =>
+          (a.yearBS || '').trim().localeCompare((b.yearBS || '').trim()) ||
+          (a.createdAt || 0) - (b.createdAt || 0)
+      );
+
+    // Rank across season using pure placement points (no +3 bonuses)
+    const purePointStandings = computeStandings(seasonScoped, 'all', 'points');
+    const rankIndex = purePointStandings.findIndex(
+      (r) => r.player.trim().toLowerCase() === target
+    );
+    const seasonRank = rankIndex >= 0 ? rankIndex + 1 : null;
+
+    const pQuizzes = seasonScoped.filter((q) =>
+      q.players.some((p) => p.trim().toLowerCase() === target)
+    );
+
+    let first = 0;
+    let second = 0;
+    let third = 0;
+    let fourth = 0;
+    let fifth = 0;
+    let sixth = 0;
+    let notQualified = 0;
+    let qualified = 0;
+    let purePoints = 0;
+    let ratingSum = 0;
+    let bestRating = 0;
+    let bestRatingQuiz: QuizRecord | null = null;
+    let bestQualStreak = 0;
+    let runQual = 0;
+    let bestPodiumStreak = 0;
+    let runPod = 0;
+
+    const partnerMap = new Map<
+      string,
+      { name: string; shared: number; wins: number; podiums: number; qualified: number; points: number }
+    >();
+    const hostMap = new Map<
+      string,
+      { host: string; total: number; podiums: number; wins: number }
+    >();
+
+    for (const q of pQuizzes) {
+      const pts = POSITION_POINTS[q.position] ?? 0;
+      purePoints += pts;
+      const pRating = getPlayerQuizRating(q, wrappedPlayer);
+      ratingSum += pRating;
+      if (pRating >= bestRating) {
+        bestRating = pRating;
+        bestRatingQuiz = q;
+      }
+
+      const isQual = q.position !== 'Not Qualified';
+      const isPod =
+        q.position === '1st' || q.position === '2nd' || q.position === '3rd';
+      const isWin = q.position === '1st';
+
+      if (isQual) {
+        qualified += 1;
+        runQual += 1;
+        if (runQual > bestQualStreak) bestQualStreak = runQual;
+      } else {
+        runQual = 0;
+        notQualified += 1;
+      }
+
+      if (isPod) {
+        runPod += 1;
+        if (runPod > bestPodiumStreak) bestPodiumStreak = runPod;
+      } else {
+        runPod = 0;
+      }
+
+      switch (q.position) {
+        case '1st':
+          first += 1;
+          break;
+        case '2nd':
+          second += 1;
+          break;
+        case '3rd':
+          third += 1;
+          break;
+        case '4th':
+          fourth += 1;
+          break;
+        case '5th':
+          fifth += 1;
+          break;
+        case '6th':
+          sixth += 1;
+          break;
+        default:
+          break;
+      }
+
+      if (q.host?.trim()) {
+        const hk = q.host.trim();
+        const curH = hostMap.get(hk) || { host: hk, total: 0, podiums: 0, wins: 0 };
+        curH.total += 1;
+        if (isPod) curH.podiums += 1;
+        if (isWin) curH.wins += 1;
+        hostMap.set(hk, curH);
+      }
+
+      const mates = Array.from(
+        new Set(q.players.map((p) => p.trim()).filter(Boolean))
+      );
+      for (const m of mates) {
+        if (m.toLowerCase() === target) continue;
+        const mKey = m.toLowerCase();
+        const curM = partnerMap.get(mKey) || {
+          name: m,
+          shared: 0,
+          wins: 0,
+          podiums: 0,
+          qualified: 0,
+          points: 0,
+        };
+        curM.shared += 1;
+        if (isWin) curM.wins += 1;
+        if (isPod) curM.podiums += 1;
+        if (isQual) curM.qualified += 1;
+        curM.points += pts;
+        partnerMap.set(mKey, curM);
+      }
+    }
+
+    const totalQuizzes = pQuizzes.length;
+    const podiums = first + second + third;
+    const qualRate =
+      totalQuizzes > 0 ? Math.round((qualified / totalQuizzes) * 100) : 0;
+    const podiumRate =
+      totalQuizzes > 0 ? Math.round((podiums / totalQuizzes) * 100) : 0;
+    const avgRating =
+      totalQuizzes > 0 ? Math.round((ratingSum / totalQuizzes) * 10) / 10 : 0;
+    const avgPoints =
+      totalQuizzes > 0 ? Math.round((purePoints / totalQuizzes) * 100) / 100 : 0;
+
+    const sortedPartners = Array.from(partnerMap.values())
+      .map((p) => ({
+        ...p,
+        qualRate: p.shared > 0 ? Math.round((p.qualified / p.shared) * 100) : 0,
+      }))
+      .sort(
+        (a, b) =>
+          b.podiums - a.podiums ||
+          b.wins - a.wins ||
+          b.points - a.points ||
+          b.shared - a.shared
+      );
+
+    const topHost =
+      Array.from(hostMap.values()).sort(
+        (a, b) => b.wins - a.wins || b.podiums - a.podiums || b.total - a.total
+      )[0] || null;
+
+    const signatureQuiz =
+      pQuizzes
+        .slice()
+        .sort(
+          (a, b) =>
+            (POSITION_POINTS[b.position] ?? 0) - (POSITION_POINTS[a.position] ?? 0) ||
+            getPlayerQuizRating(b, wrappedPlayer) -
+              getPlayerQuizRating(a, wrappedPlayer) ||
+            (b.teamCount || 0) - (a.teamCount || 0)
+        )[0] || null;
+
+    return {
+      player: wrappedPlayer,
+      label: normalized === 'all' ? 'All-Time Chronicle' : `${normalized} B.S.`,
+      totalQuizzes,
+      qualified,
+      notQualified,
+      first,
+      second,
+      third,
+      fourth,
+      fifth,
+      sixth,
+      podiums,
+      qualRate,
+      podiumRate,
+      purePoints,
+      avgPoints,
+      avgRating,
+      bestRating,
+      bestRatingQuiz,
+      seasonRank,
+      totalRankedPlayers: purePointStandings.length,
+      bestPartner: sortedPartners[0] || null,
+      runnerUpPartner: sortedPartners[1] || null,
+      bestQualStreak,
+      bestPodiumStreak,
+      topHost,
+      signatureQuiz,
+    };
+  }, [quizzes, wrappedYear, wrappedPlayer]);
+
+  const downloadIndividualWrappedPoster = () => {
+    if (!individualWrappedData) return;
+    const d = individualWrappedData;
+    const canvas = document.createElement('canvas');
+    canvas.width = 1200;
+    canvas.height = 1500;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const bgGrad = ctx.createLinearGradient(0, 0, 1200, 1500);
+    bgGrad.addColorStop(0, '#071326');
+    bgGrad.addColorStop(0.55, '#09090d');
+    bgGrad.addColorStop(1, '#120e07');
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0, 0, 1200, 1500);
+
+    const glow = ctx.createRadialGradient(600, 250, 40, 600, 250, 560);
+    glow.addColorStop(0, 'rgba(212, 175, 55, 0.22)');
+    glow.addColorStop(1, 'rgba(212, 175, 55, 0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, 1200, 1500);
+
+    ctx.strokeStyle = '#d4af37';
+    ctx.lineWidth = 4;
+    ctx.strokeRect(36, 36, 1128, 1428);
+    ctx.strokeStyle = 'rgba(212, 175, 55, 0.35)';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(52, 52, 1096, 1396);
+
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#d4af37';
+    ctx.font = '700 22px monospace';
+    ctx.fillText('DISTRICT QUIZ ROYALE · PLAYER WRAPPED', 600, 120);
+
+    ctx.fillStyle = '#f8e6a0';
+    ctx.font = '700 58px Georgia, serif';
+    ctx.fillText(d.player, 600, 195, 1040);
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '700 30px monospace';
+    ctx.fillText(`${d.label.toUpperCase()} EDITION`, 600, 250);
+
+    const drawCard = (
+      x: number,
+      y: number,
+      w: number,
+      h: number,
+      border = 'rgba(212,175,55,0.4)',
+      fill = 'rgba(255,255,255,0.04)'
+    ) => {
+      ctx.save();
+      ctx.beginPath();
+      ctx.roundRect(x, y, w, h, 20);
+      ctx.fillStyle = fill;
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = border;
+      ctx.stroke();
+      ctx.restore();
+    };
+
+    const tiles = [
+      { label: 'QUIZZES', val: String(d.totalQuizzes), color: '#ffffff' },
+      { label: 'QUAL RATE', val: `${d.qualRate}%`, color: '#6ee7b7' },
+      { label: 'PODIUMS', val: String(d.podiums), color: '#f8e6a0' },
+      { label: 'AVG RATING', val: `${d.avgRating}/10`, color: '#7dd3fc' },
+    ];
+    tiles.forEach((t, i) => {
+      const tx = 88 + i * 262;
+      drawCard(tx, 310, 240, 145);
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#9ca3af';
+      ctx.font = '700 18px monospace';
+      ctx.fillText(t.label, tx + 120, 358);
+      ctx.fillStyle = t.color;
+      ctx.font = '700 46px monospace';
+      ctx.fillText(t.val, tx + 120, 424);
+    });
+
+    drawCard(88, 490, 498, 220, 'rgba(212,175,55,0.55)', 'rgba(212,175,55,0.08)');
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#d4af37';
+    ctx.font = '700 18px monospace';
+    ctx.fillText('PURE QUIZ POINTS & PACE', 120, 540);
+    ctx.fillStyle = '#f8e6a0';
+    ctx.font = '700 44px monospace';
+    ctx.fillText(`${d.purePoints} pts`, 120, 602);
+    ctx.fillStyle = '#e5e7eb';
+    ctx.font = '600 22px monospace';
+    ctx.fillText(
+      `${d.avgPoints} avg pts/quiz · Rank ${d.seasonRank ? `#${d.seasonRank}` : '—'}`,
+      120,
+      655,
+      434
+    );
+
+    drawCard(614, 490, 498, 220, 'rgba(56,189,248,0.5)', 'rgba(56,189,248,0.07)');
+    ctx.fillStyle = '#7dd3fc';
+    ctx.font = '700 18px monospace';
+    ctx.fillText('PEAK INDIVIDUAL RATING', 646, 540);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '700 44px monospace';
+    ctx.fillText(`${d.bestRating}/10`, 646, 602);
+    ctx.fillStyle = '#bae6fd';
+    ctx.font = '600 21px sans-serif';
+    ctx.fillText(d.bestRatingQuiz?.quizName || '—', 646, 655, 434);
+
+    drawCard(88, 745, 1024, 210, 'rgba(52,211,153,0.45)', 'rgba(16,185,129,0.07)');
+    ctx.fillStyle = '#6ee7b7';
+    ctx.font = '700 19px monospace';
+    ctx.fillText('BEST PARTNER · SQUAD CHEMISTRY', 122, 795);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '700 38px Georgia, serif';
+    ctx.fillText(
+      d.bestPartner ? `${d.player}  &  ${d.bestPartner.name}` : 'Solo Records Only',
+      122,
+      855,
+      956
+    );
+    ctx.fillStyle = '#d1fae5';
+    ctx.font = '600 22px monospace';
+    ctx.fillText(
+      d.bestPartner
+        ? `${d.bestPartner.podiums} Top-3 Podiums · ${d.bestPartner.wins} Gold Wins · ${d.bestPartner.qualRate}% Qual (${d.bestPartner.shared} Shared)`
+        : 'No partner records in this scope',
+      122,
+      911,
+      956
+    );
+
+    drawCard(88, 990, 498, 235);
+    ctx.fillStyle = '#f5dc82';
+    ctx.font = '700 18px monospace';
+    ctx.fillText('PERSONAL STREAKS & ARENA', 120, 1040);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '700 28px monospace';
+    ctx.fillText(`Best Qual Streak: ${d.bestQualStreak} Quizzes`, 120, 1100);
+    ctx.fillStyle = '#f8e6a0';
+    ctx.fillText(`Best Podium Run: ${d.bestPodiumStreak} Top-3`, 120, 1148);
+    ctx.fillStyle = '#cbd5e1';
+    ctx.font = '600 20px sans-serif';
+    ctx.fillText(
+      d.topHost ? `Top Host: ${d.topHost.host} (${d.topHost.total})` : 'Top Host: —',
+      120,
+      1196,
+      434
+    );
+
+    drawCard(614, 990, 498, 235);
+    ctx.fillStyle = '#f5dc82';
+    ctx.font = '700 18px monospace';
+    ctx.fillText('SIGNATURE VICTORY', 646, 1040);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '700 30px Georgia, serif';
+    ctx.fillText(d.signatureQuiz?.quizName || '—', 646, 1098, 434);
+    ctx.fillStyle = '#f8e6a0';
+    ctx.font = '600 21px monospace';
+    ctx.fillText(
+      d.signatureQuiz
+        ? `${d.signatureQuiz.position} Place · Personal ${getPlayerQuizRating(d.signatureQuiz, d.player)}/10`
+        : 'No highlight',
+      646,
+      1148,
+      434
+    );
+    ctx.fillStyle = '#cbd5e1';
+    ctx.font = '600 19px sans-serif';
+    ctx.fillText(d.signatureQuiz?.host || '', 646, 1196, 434);
+
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#d4af37';
+    ctx.font = '700 22px monospace';
+    ctx.fillText(
+      `GOLD ${d.first}  ·  SILVER ${d.second}  ·  BRONZE ${d.third}  ·  ${d.purePoints} PURE POINTS`,
+      600,
+      1315
+    );
+    ctx.fillStyle = 'rgba(245, 242, 235, 0.55)';
+    ctx.font = '500 18px Georgia, serif';
+    ctx.fillText('District Quiz Royale Permanent Academic Archive', 600, 1378);
+
+    const link = document.createElement('a');
+    link.download = `DQR-Wrapped-${d.player.replace(/\s+/g, '-')}-${wrappedYear === 'all' ? 'All-Time' : wrappedYear}.png`;
     link.href = canvas.toDataURL('image/png');
     link.click();
   };
@@ -2917,6 +3412,18 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
                         suffix: '/10',
                       },
                       {
+                        label: 'Pure Quiz Placement Points',
+                        valA: h2hData.a.totalPoints,
+                        valB: h2hData.b.totalPoints,
+                        suffix: ' pts',
+                      },
+                      {
+                        label: 'Average Points per Quiz',
+                        valA: h2hData.a.avgPoints,
+                        valB: h2hData.b.avgPoints,
+                        suffix: '',
+                      },
+                      {
                         label: '1st Place Wins (Gold)',
                         valA: h2hData.a.first,
                         valB: h2hData.b.first,
@@ -3091,6 +3598,214 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
                         )}
                       </div>
                     )}
+                  </div>
+
+                  {/* Pace & Catch-Up Benchmark (Pure Placement Points, Excludes +3 Award Bonuses) */}
+                  <div className="rounded-2xl border border-[#d4af37]/40 bg-gradient-to-br from-[#16130b] via-[#0c0d12] to-[#0a1424] p-5 sm:p-6">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-4">
+                      <div>
+                        <p className="font-mono text-[11px] font-bold tracking-wider text-[#d4af37] uppercase">
+                          Catch-Up Pace Benchmark · Quiz Placement Points Only
+                        </p>
+                        <h4 className="mt-1 font-display text-xl font-bold text-[#f8e6a0]">
+                          Normalized to {h2hData.catchUp.maxQuizzes}{' '}
+                          {h2hData.catchUp.maxQuizzes === 1 ? 'Quiz' : 'Quizzes'} (Highest Quiz Count)
+                        </h4>
+                      </div>
+                      <span className="rounded-lg border border-[#d4af37]/30 bg-black/40 px-3 py-1.5 font-mono text-[11px] text-neutral-300">
+                        1st=6 · 2nd=5 · 3rd=4 · 4th=3 · 5th=2 · 6th=1 · Excludes +3 Awards
+                      </span>
+                    </div>
+
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      <div className="rounded-xl border border-[#d4af37]/30 bg-black/35 p-4">
+                        <span className="font-mono text-[10px] font-bold text-[#d4af37] uppercase">
+                          {h2hData.a.name}
+                        </span>
+                        <p className="mt-1 font-mono text-lg font-extrabold text-white">
+                          {h2hData.a.totalPoints} pts{' '}
+                          <span className="text-xs font-normal text-neutral-400">
+                            across {h2hData.a.totalQuizzes}{' '}
+                            {h2hData.a.totalQuizzes === 1 ? 'quiz' : 'quizzes'}
+                          </span>
+                        </p>
+                        <p className="mt-0.5 font-mono text-xs text-[#f5dc82]">
+                          Current Pace: {h2hData.a.avgPoints} pts / quiz
+                        </p>
+                      </div>
+
+                      <div className="rounded-xl border border-sky-400/30 bg-black/35 p-4">
+                        <span className="font-mono text-[10px] font-bold text-sky-300 uppercase">
+                          {h2hData.b.name}
+                        </span>
+                        <p className="mt-1 font-mono text-lg font-extrabold text-white">
+                          {h2hData.b.totalPoints} pts{' '}
+                          <span className="text-xs font-normal text-neutral-400">
+                            across {h2hData.b.totalQuizzes}{' '}
+                            {h2hData.b.totalQuizzes === 1 ? 'quiz' : 'quizzes'}
+                          </span>
+                        </p>
+                        <p className="mt-0.5 font-mono text-xs text-sky-300">
+                          Current Pace: {h2hData.b.avgPoints} pts / quiz
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 rounded-xl border border-white/10 bg-black/45 p-4 sm:p-5">
+                      {h2hData.catchUp.status === 'same-player' && (
+                        <p className="text-sm text-neutral-300">
+                          Select two different players to calculate catch-up pace
+                          and bare-minimum finishes required.
+                        </p>
+                      )}
+
+                      {h2hData.catchUp.status === 'equal-quizzes' && (
+                        <div className="space-y-1.5">
+                          <p className="font-mono text-xs font-bold text-emerald-300 uppercase">
+                            Equal Quiz Count ({h2hData.catchUp.maxQuizzes} Quizzes Each)
+                          </p>
+                          <p className="text-sm text-white">
+                            {h2hData.a.totalPoints === h2hData.b.totalPoints
+                              ? `Dead even at ${h2hData.a.totalPoints} pure quiz points each (${h2hData.a.avgPoints} pts/quiz).`
+                              : h2hData.a.totalPoints > h2hData.b.totalPoints
+                                ? `${h2hData.a.name} leads ${h2hData.b.name} by ${h2hData.a.totalPoints - h2hData.b.totalPoints} pts (${h2hData.a.totalPoints} vs ${h2hData.b.totalPoints}) over ${h2hData.catchUp.maxQuizzes} quizzes.`
+                                : `${h2hData.b.name} leads ${h2hData.a.name} by ${h2hData.b.totalPoints - h2hData.a.totalPoints} pts (${h2hData.b.totalPoints} vs ${h2hData.a.totalPoints}) over ${h2hData.catchUp.maxQuizzes} quizzes.`}
+                          </p>
+                        </div>
+                      )}
+
+                      {h2hData.catchUp.status === 'chaser-already-ahead' && (
+                        <div className="space-y-1.5">
+                          <p className="font-mono text-xs font-bold text-emerald-300 uppercase">
+                            Games in Hand + Points Lead
+                          </p>
+                          <p className="text-sm text-white">
+                            <span className="font-bold text-[#f8e6a0]">
+                              {h2hData.catchUp.chaser.name}
+                            </span>{' '}
+                            already leads{' '}
+                            <span className="font-bold">
+                              {h2hData.catchUp.paceSetter.name}
+                            </span>{' '}
+                            by{' '}
+                            <span className="font-mono font-bold text-emerald-300">
+                              +
+                              {h2hData.catchUp.chaser.totalPoints -
+                                h2hData.catchUp.paceSetter.totalPoints}{' '}
+                              pts
+                            </span>{' '}
+                            with{' '}
+                            <span className="font-mono font-bold text-[#f8e6a0]">
+                              {h2hData.catchUp.remainingQuizzes}{' '}
+                              {h2hData.catchUp.remainingQuizzes === 1
+                                ? 'quiz'
+                                : 'quizzes'}
+                            </span>{' '}
+                            still remaining to reach {h2hData.catchUp.maxQuizzes}!
+                          </p>
+                        </div>
+                      )}
+
+                      {h2hData.catchUp.status === 'reachable' && (
+                        <div className="space-y-3">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <p className="font-mono text-xs font-bold text-[#f5dc82] uppercase">
+                              Target to Beat {h2hData.catchUp.paceSetter.name} within{' '}
+                              {h2hData.catchUp.maxQuizzes} Quizzes
+                            </p>
+                            <span className="rounded-md border border-[#d4af37]/35 bg-[#d4af37]/15 px-2.5 py-0.5 font-mono text-xs font-bold text-[#f8e6a0]">
+                              {h2hData.catchUp.remainingQuizzes} Remaining{' '}
+                              {h2hData.catchUp.remainingQuizzes === 1
+                                ? 'Quiz'
+                                : 'Quizzes'}
+                            </span>
+                          </div>
+
+                          <div className="grid gap-3 sm:grid-cols-3">
+                            <div className="rounded-lg border border-white/10 bg-white/5 p-3">
+                              <span className="block font-mono text-[10px] text-neutral-400 uppercase">
+                                Points Needed to Defeat
+                              </span>
+                              <span className="mt-1 block font-mono text-xl font-extrabold text-white">
+                                {h2hData.catchUp.pointsToBeat} pts
+                              </span>
+                              <span className="font-mono text-[10px] text-neutral-400">
+                                ({h2hData.catchUp.pointsToTie} pts to tie)
+                              </span>
+                            </div>
+
+                            <div className="rounded-lg border border-[#d4af37]/30 bg-[#d4af37]/10 p-3">
+                              <span className="block font-mono text-[10px] text-[#d4af37] uppercase">
+                                Avg Points / Quiz Needed
+                              </span>
+                              <span className="mt-1 block font-mono text-xl font-extrabold text-[#f8e6a0]">
+                                {h2hData.catchUp.avgPointsNeeded}
+                                <span className="ml-1 text-xs font-normal">
+                                  / quiz
+                                </span>
+                              </span>
+                              <span className="font-mono text-[10px] text-neutral-300">
+                                Across {h2hData.catchUp.remainingQuizzes}{' '}
+                                {h2hData.catchUp.remainingQuizzes === 1
+                                  ? 'quiz'
+                                  : 'quizzes'}
+                              </span>
+                            </div>
+
+                            <div className="rounded-lg border border-emerald-400/30 bg-emerald-500/10 p-3">
+                              <span className="block font-mono text-[10px] text-emerald-300 uppercase">
+                                Bare Minimum to Defeat
+                              </span>
+                              <span className="mt-1 block font-display text-base font-bold text-emerald-100">
+                                {h2hData.catchUp.bareMinimumText}
+                              </span>
+                              <span className="font-mono text-[10px] text-emerald-200/75">
+                                For {h2hData.catchUp.chaser.name}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {h2hData.catchUp.status === 'unreachable' && (
+                        <div className="space-y-2">
+                          <p className="font-mono text-xs font-bold text-rose-300 uppercase">
+                            Mathematically Unreachable within {h2hData.catchUp.maxQuizzes} Quizzes
+                          </p>
+                          <p className="text-sm text-neutral-200">
+                            <span className="font-bold text-white">
+                              {h2hData.catchUp.chaser.name}
+                            </span>{' '}
+                            needs{' '}
+                            <span className="font-mono font-bold text-[#f8e6a0]">
+                              {h2hData.catchUp.pointsToBeat} pts
+                            </span>{' '}
+                            ({h2hData.catchUp.avgPointsNeeded} avg pts/quiz) across{' '}
+                            <span className="font-mono font-bold">
+                              {h2hData.catchUp.remainingQuizzes}
+                            </span>{' '}
+                            remaining{' '}
+                            {h2hData.catchUp.remainingQuizzes === 1
+                              ? 'quiz'
+                              : 'quizzes'}{' '}
+                            to overtake{' '}
+                            <span className="font-bold">
+                              {h2hData.catchUp.paceSetter.name}
+                            </span>
+                            , which exceeds the maximum 6 pts/quiz (winning 1st in
+                            every remaining quiz reaches{' '}
+                            <span className="font-mono font-bold text-white">
+                              {h2hData.catchUp.maxPossibleTotal} pts
+                            </span>{' '}
+                            vs{' '}
+                            <span className="font-mono font-bold text-white">
+                              {h2hData.catchUp.paceSetter.totalPoints} pts
+                            </span>
+                            ).
+                          </p>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}
@@ -3421,7 +4136,7 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
               transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
               className="rounded-3xl border border-[#d4af37]/45 bg-gradient-to-b from-[#0a1628] via-[#09090d] to-[#0b0a08] p-6 text-[#f5f2eb] shadow-[0_24px_80px_rgba(0,0,0,0.7)] sm:p-10"
             >
-              {/* Header + Season Picker */}
+              {/* Header + Season & Player Picker */}
               <div className="flex flex-col justify-between gap-4 border-b border-[#d4af37]/20 pb-6 lg:flex-row lg:items-end">
                 <div>
                   <p className="font-mono text-xs tracking-[0.22em] text-[#d4af37] uppercase">
@@ -3429,50 +4144,662 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
                   </p>
                   <h2 className="mt-1.5 font-display text-2xl font-bold text-[#f8e6a0] sm:text-4xl">
                     DQR Season Wrapped
+                    {wrappedPlayer !== 'squad' ? ` · ${wrappedPlayer}` : ''}
                   </h2>
                   <p className="mt-1.5 text-xs text-neutral-400">
-                    Swipe or step through the defining numbers, sovereigns,
-                    highest-rated players, chemistry duos, and signature victory
-                    for any B.S. season.
+                    Explore the full Squad chronicle or pick an individual
+                    player to view their personal Wrapped story and downloadable
+                    poster.
                   </p>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setWrappedYear('all');
-                      setWrappedSlide(0);
-                    }}
-                    className={`rounded-xl border px-3 py-1.5 font-mono text-xs font-bold transition-colors cursor-pointer ${
-                      wrappedYear === 'all'
-                        ? 'border-[#f5dc82] bg-[#d4af37] text-[#08080a]'
-                        : 'border-[#d4af37]/30 bg-[#12110d] text-[#f5dc82] hover:border-[#d4af37]'
-                    }`}
-                  >
-                    All-Time
-                  </button>
-                  {bsYears.map((yr) => (
+                <div className="flex flex-col items-start gap-2.5 lg:items-end">
+                  {/* Perspective Switcher: Squad vs Individual Player */}
+                  <div className="flex flex-wrap items-center gap-2">
                     <button
-                      key={yr}
                       type="button"
                       onClick={() => {
-                        setWrappedYear(yr);
+                        setWrappedPlayer('squad');
                         setWrappedSlide(0);
                       }}
                       className={`rounded-xl border px-3 py-1.5 font-mono text-xs font-bold transition-colors cursor-pointer ${
-                        wrappedYear === yr
+                        wrappedPlayer === 'squad'
+                          ? 'border-emerald-300 bg-emerald-400 text-[#071310]'
+                          : 'border-emerald-400/35 bg-[#0b1814] text-emerald-200 hover:border-emerald-300'
+                      }`}
+                    >
+                      Squad Overview
+                    </button>
+                    <select
+                      aria-label="Select individual player for Season Wrapped"
+                      value={wrappedPlayer === 'squad' ? '' : wrappedPlayer}
+                      onChange={(e) => {
+                        setWrappedPlayer(e.target.value || 'squad');
+                        setWrappedSlide(0);
+                      }}
+                      className={`rounded-xl border px-3 py-1.5 font-mono text-xs font-bold focus:outline-none cursor-pointer ${
+                        wrappedPlayer !== 'squad'
+                          ? 'border-sky-300 bg-[#0d223b] text-sky-200'
+                          : 'border-[#d4af37]/35 bg-[#12110d] text-[#f5dc82]'
+                      }`}
+                    >
+                      <option value="">Individual Player Wrapped...</option>
+                      {uniquePlayers.map((pl) => (
+                        <option key={pl} value={pl}>
+                          {pl}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Year Selector */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setWrappedYear('all');
+                        setWrappedSlide(0);
+                      }}
+                      className={`rounded-xl border px-3 py-1.5 font-mono text-xs font-bold transition-colors cursor-pointer ${
+                        wrappedYear === 'all'
                           ? 'border-[#f5dc82] bg-[#d4af37] text-[#08080a]'
                           : 'border-[#d4af37]/30 bg-[#12110d] text-[#f5dc82] hover:border-[#d4af37]'
                       }`}
                     >
-                      {yr} B.S.
+                      All-Time
                     </button>
-                  ))}
+                    {bsYears.map((yr) => (
+                      <button
+                        key={yr}
+                        type="button"
+                        onClick={() => {
+                          setWrappedYear(yr);
+                          setWrappedSlide(0);
+                        }}
+                        className={`rounded-xl border px-3 py-1.5 font-mono text-xs font-bold transition-colors cursor-pointer ${
+                          wrappedYear === yr
+                            ? 'border-[#f5dc82] bg-[#d4af37] text-[#08080a]'
+                            : 'border-[#d4af37]/30 bg-[#12110d] text-[#f5dc82] hover:border-[#d4af37]'
+                        }`}
+                      >
+                        {yr} B.S.
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
 
-              {wrappedData.totalQuizzes === 0 ? (
+              {wrappedPlayer !== 'squad' && individualWrappedData ? (
+                individualWrappedData.totalQuizzes === 0 ? (
+                  <div className="mt-8 rounded-2xl border border-[#d4af37]/25 bg-[#100f0c] p-12 text-center">
+                    <Sparkles className="mx-auto h-10 w-10 text-[#d4af37]/60" />
+                    <h3 className="mt-3 font-display text-xl font-bold text-[#f8e6a0]">
+                      No Quizzes Recorded for {individualWrappedData.player} in{' '}
+                      {individualWrappedData.label}
+                    </h3>
+                    <p className="mt-1 text-xs text-neutral-400">
+                      Switch to All-Time or pick another Bikram Sambat season
+                      above.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="mt-7 space-y-6">
+                    {/* Individual Story Progress Bars + Controls */}
+                    <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="grid flex-1 grid-cols-5 gap-2">
+                        {[
+                          '01 Footprint',
+                          '02 Peaks',
+                          '03 Partner',
+                          '04 Streaks',
+                          '05 Poster',
+                        ].map((label, idx) => {
+                          const isActive = wrappedSlide === idx;
+                          const isDone = idx < wrappedSlide;
+                          return (
+                            <button
+                              key={label}
+                              type="button"
+                              onClick={() => setWrappedSlide(idx)}
+                              className="group text-left cursor-pointer"
+                            >
+                              <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/15">
+                                <div
+                                  className={`h-full transition-all duration-300 ${
+                                    isActive
+                                      ? 'w-full bg-gradient-to-r from-sky-400 to-[#f8e6a0]'
+                                      : isDone
+                                        ? 'w-full bg-sky-400/65'
+                                        : 'w-0'
+                                  }`}
+                                />
+                              </div>
+                              <span
+                                className={`mt-1.5 hidden font-mono text-[10px] font-bold sm:block ${
+                                  isActive
+                                    ? 'text-sky-200'
+                                    : 'text-neutral-400 group-hover:text-neutral-200'
+                                }`}
+                              >
+                                {label}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      <div className="flex items-center gap-2 self-end sm:self-auto">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setWrappedSlide((s) => (s - 1 + 5) % 5)
+                          }
+                          aria-label="Previous individual wrapped slide"
+                          className="inline-flex items-center gap-1 rounded-xl border border-[#d4af37]/35 bg-[#12110d] px-3 py-2 text-xs font-semibold text-[#f5dc82] hover:border-[#d4af37] cursor-pointer"
+                        >
+                          <ChevronLeft className="h-4 w-4" />
+                          <span>Prev</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setWrappedSlide((s) => (s + 1) % 5)}
+                          aria-label="Next individual wrapped slide"
+                          className="inline-flex items-center gap-1 rounded-xl bg-[#d4af37] px-3.5 py-2 text-xs font-bold text-[#08080a] hover:bg-[#e7c44d] cursor-pointer"
+                        >
+                          <span>Next</span>
+                          <ChevronRight className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="relative overflow-hidden rounded-3xl border border-sky-400/35 bg-[#090e18] p-6 shadow-inner sm:p-9">
+                      <AnimatePresence mode="wait">
+                        {/* INDIVIDUAL SLIDE 0 */}
+                        {wrappedSlide === 0 && (
+                          <motion.div
+                            key={`pwrap-0-${wrappedPlayer}-${wrappedYear}`}
+                            initial={{ opacity: 0, x: 24 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            exit={{ opacity: 0, x: -24 }}
+                            transition={{ duration: 0.32, ease: [0.16, 1, 0.3, 1] }}
+                            className="space-y-6"
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <div>
+                                <span className="font-mono text-[11px] font-bold tracking-[0.2em] text-sky-300 uppercase">
+                                  Chapter 01 · Personal Season Footprint
+                                </span>
+                                <h3 className="mt-1 font-display text-3xl font-bold text-white sm:text-4xl">
+                                  {individualWrappedData.player} ·{' '}
+                                  {individualWrappedData.label}
+                                </h3>
+                              </div>
+                              <div className="rounded-2xl border border-sky-400/40 bg-[#0d1c30] px-4 py-2 text-right">
+                                <span className="block font-mono text-[10px] text-sky-200 uppercase">
+                                  Avg Player Rating
+                                </span>
+                                <span className="font-mono text-xl font-extrabold text-white">
+                                  {individualWrappedData.avgRating} / 10
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+                              <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
+                                <span className="font-mono text-[11px] text-neutral-400 uppercase">
+                                  Quizzes Played
+                                </span>
+                                <p className="mt-2 font-mono text-4xl font-extrabold text-white">
+                                  {individualWrappedData.totalQuizzes}
+                                </p>
+                                <p className="mt-1 text-xs text-neutral-400">
+                                  {individualWrappedData.qualified} finals reached
+                                </p>
+                              </div>
+                              <div className="rounded-2xl border border-emerald-400/30 bg-emerald-500/10 p-5">
+                                <span className="font-mono text-[11px] text-emerald-300 uppercase">
+                                  Qualification Rate
+                                </span>
+                                <p className="mt-2 font-mono text-4xl font-extrabold text-emerald-200">
+                                  {individualWrappedData.qualRate}%
+                                </p>
+                                <p className="mt-1 text-xs text-emerald-200/80">
+                                  {individualWrappedData.podiumRate}% Top-3 podium rate
+                                </p>
+                              </div>
+                              <div className="rounded-2xl border border-[#d4af37]/35 bg-[#d4af37]/10 p-5">
+                                <span className="font-mono text-[11px] text-[#f5dc82] uppercase">
+                                  Pure Quiz Points
+                                </span>
+                                <p className="mt-2 font-mono text-4xl font-extrabold text-[#f8e6a0]">
+                                  {individualWrappedData.purePoints}
+                                </p>
+                                <p className="mt-1 text-xs text-[#f5dc82]/85">
+                                  {individualWrappedData.avgPoints} avg pts/quiz
+                                </p>
+                              </div>
+                              <div className="rounded-2xl border border-amber-300/35 bg-gradient-to-br from-[#231b0b] to-[#110e09] p-5">
+                                <span className="font-mono text-[11px] text-amber-200 uppercase">
+                                  Medal Split
+                                </span>
+                                <div className="mt-3 flex items-baseline gap-3 font-mono text-lg font-extrabold">
+                                  <span className="text-[#fde047]">
+                                    {individualWrappedData.first}G
+                                  </span>
+                                  <span className="text-slate-200">
+                                    {individualWrappedData.second}S
+                                  </span>
+                                  <span className="text-[#f5c08D]">
+                                    {individualWrappedData.third}B
+                                  </span>
+                                </div>
+                                <p className="mt-2 text-xs text-neutral-400">
+                                  {individualWrappedData.podiums} total podiums
+                                </p>
+                              </div>
+                            </div>
+                          </motion.div>
+                        )}
+
+                        {/* INDIVIDUAL SLIDE 1 */}
+                        {wrappedSlide === 1 && (
+                          <motion.div
+                            key={`pwrap-1-${wrappedPlayer}-${wrappedYear}`}
+                            initial={{ opacity: 0, x: 24 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            exit={{ opacity: 0, x: -24 }}
+                            transition={{ duration: 0.32, ease: [0.16, 1, 0.3, 1] }}
+                            className="space-y-6"
+                          >
+                            <div>
+                              <span className="font-mono text-[11px] font-bold tracking-[0.2em] text-sky-300 uppercase">
+                                Chapter 02 · Rating Peak &amp; Placement Profile
+                              </span>
+                              <h3 className="mt-1 font-display text-3xl font-bold text-white">
+                                How {individualWrappedData.player} Ranked
+                              </h3>
+                            </div>
+
+                            <div className="grid gap-4 sm:grid-cols-2">
+                              <div className="rounded-2xl border border-[#d4af37]/45 bg-gradient-to-br from-[#1f190b] to-[#0d0c09] p-5">
+                                <span className="font-mono text-[11px] font-bold text-[#d4af37] uppercase">
+                                  Pure Points Season Rank
+                                </span>
+                                <p className="mt-2 font-mono text-4xl font-extrabold text-[#f8e6a0]">
+                                  {individualWrappedData.seasonRank
+                                    ? `#${individualWrappedData.seasonRank}`
+                                    : '—'}
+                                  <span className="ml-2 text-sm font-normal text-neutral-400">
+                                    of {individualWrappedData.totalRankedPlayers}
+                                  </span>
+                                </p>
+                                <p className="mt-1 font-mono text-xs text-neutral-300">
+                                  {individualWrappedData.purePoints} pts (
+                                  {individualWrappedData.avgPoints} pts/quiz, excludes +3 bonuses)
+                                </p>
+                              </div>
+
+                              <button
+                                type="button"
+                                disabled={!individualWrappedData.bestRatingQuiz}
+                                onClick={() =>
+                                  individualWrappedData.bestRatingQuiz &&
+                                  setSelectedQuiz(
+                                    individualWrappedData.bestRatingQuiz
+                                  )
+                                }
+                                className="rounded-2xl border border-sky-400/45 bg-gradient-to-br from-[#0e1e33] to-[#080d14] p-5 text-left transition-colors hover:border-sky-300 cursor-pointer"
+                              >
+                                <span className="font-mono text-[11px] font-bold text-sky-300 uppercase">
+                                  Peak Individual Rating
+                                </span>
+                                <p className="mt-2 font-mono text-4xl font-extrabold text-white">
+                                  {individualWrappedData.bestRating} / 10
+                                </p>
+                                <p className="mt-1 truncate text-xs text-sky-200">
+                                  {individualWrappedData.bestRatingQuiz?.quizName ||
+                                    '—'}
+                                </p>
+                              </button>
+                            </div>
+
+                            <div className="rounded-2xl border border-white/10 bg-black/35 p-5">
+                              <p className="mb-3 font-mono text-[10px] font-bold tracking-wider text-neutral-400 uppercase">
+                                Placement Distribution ({individualWrappedData.label})
+                              </p>
+                              <div className="grid grid-cols-4 gap-2 text-center font-mono text-xs sm:grid-cols-7">
+                                {[
+                                  { lbl: '1st', v: individualWrappedData.first },
+                                  { lbl: '2nd', v: individualWrappedData.second },
+                                  { lbl: '3rd', v: individualWrappedData.third },
+                                  { lbl: '4th', v: individualWrappedData.fourth },
+                                  { lbl: '5th', v: individualWrappedData.fifth },
+                                  { lbl: '6th', v: individualWrappedData.sixth },
+                                  { lbl: 'NQ', v: individualWrappedData.notQualified },
+                                ].map((b) => (
+                                  <div
+                                    key={b.lbl}
+                                    className="rounded-xl border border-white/10 bg-white/5 py-2.5"
+                                  >
+                                    <span className="block text-[10px] text-neutral-400">
+                                      {b.lbl}
+                                    </span>
+                                    <span className="mt-0.5 block text-base font-bold text-white">
+                                      {b.v}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </motion.div>
+                        )}
+
+                        {/* INDIVIDUAL SLIDE 2 */}
+                        {wrappedSlide === 2 && (
+                          <motion.div
+                            key={`pwrap-2-${wrappedPlayer}-${wrappedYear}`}
+                            initial={{ opacity: 0, x: 24 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            exit={{ opacity: 0, x: -24 }}
+                            transition={{ duration: 0.32, ease: [0.16, 1, 0.3, 1] }}
+                            className="space-y-6"
+                          >
+                            <div>
+                              <span className="font-mono text-[11px] font-bold tracking-[0.2em] text-emerald-300 uppercase">
+                                Chapter 03 · Personal Chemistry
+                              </span>
+                              <h3 className="mt-1 font-display text-3xl font-bold text-white">
+                                Top Teammate in {individualWrappedData.label}
+                              </h3>
+                            </div>
+
+                            {individualWrappedData.bestPartner ? (
+                              <div className="rounded-2xl border border-emerald-400/40 bg-gradient-to-br from-[#0c1d18] to-[#08100d] p-6">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <span className="rounded-lg border border-emerald-400/35 bg-emerald-400/10 px-3 py-1 font-mono text-[11px] font-bold text-emerald-200 uppercase">
+                                    #1 Partner
+                                  </span>
+                                  <span className="font-mono text-xs font-bold text-[#f8e6a0]">
+                                    {individualWrappedData.bestPartner.qualRate}% Shared Qual
+                                  </span>
+                                </div>
+                                <p className="mt-4 font-display text-2xl font-bold text-white sm:text-3xl">
+                                  {individualWrappedData.player}{' '}
+                                  <span className="mx-1.5 text-[#d4af37]">&amp;</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setWrappedPlayer(
+                                        individualWrappedData.bestPartner!.name
+                                      );
+                                      setWrappedSlide(0);
+                                    }}
+                                    className="text-emerald-200 hover:underline cursor-pointer"
+                                  >
+                                    {individualWrappedData.bestPartner.name}
+                                  </button>
+                                </p>
+                                <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                                  <div className="rounded-xl border border-white/10 bg-black/35 p-3 text-center">
+                                    <span className="block font-mono text-[10px] text-neutral-400 uppercase">
+                                      Shared
+                                    </span>
+                                    <span className="font-mono text-xl font-bold text-white">
+                                      {individualWrappedData.bestPartner.shared}
+                                    </span>
+                                  </div>
+                                  <div className="rounded-xl border border-[#d4af37]/30 bg-black/35 p-3 text-center">
+                                    <span className="block font-mono text-[10px] text-[#d4af37] uppercase">
+                                      Gold
+                                    </span>
+                                    <span className="font-mono text-xl font-bold text-[#f8e6a0]">
+                                      {individualWrappedData.bestPartner.wins}
+                                    </span>
+                                  </div>
+                                  <div className="rounded-xl border border-emerald-400/25 bg-black/35 p-3 text-center">
+                                    <span className="block font-mono text-[10px] text-emerald-300 uppercase">
+                                      Podiums
+                                    </span>
+                                    <span className="font-mono text-xl font-bold text-emerald-200">
+                                      {individualWrappedData.bestPartner.podiums}
+                                    </span>
+                                  </div>
+                                  <div className="rounded-xl border border-white/10 bg-black/35 p-3 text-center">
+                                    <span className="block font-mono text-[10px] text-neutral-400 uppercase">
+                                      Points
+                                    </span>
+                                    <span className="font-mono text-xl font-bold text-white">
+                                      {individualWrappedData.bestPartner.points}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            ) : (
+                              <p className="text-sm text-neutral-400">
+                                No partner data recorded in this scope.
+                              </p>
+                            )}
+
+                            {individualWrappedData.runnerUpPartner && (
+                              <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-xs text-neutral-300">
+                                <span className="font-mono font-bold text-[#d4af37] uppercase">
+                                  Next Best Teammate:{' '}
+                                </span>
+                                <span className="font-semibold text-white">
+                                  {individualWrappedData.runnerUpPartner.name}
+                                </span>{' '}
+                                · {individualWrappedData.runnerUpPartner.podiums}{' '}
+                                Podiums ·{' '}
+                                {individualWrappedData.runnerUpPartner.wins} Gold
+                              </div>
+                            )}
+                          </motion.div>
+                        )}
+
+                        {/* INDIVIDUAL SLIDE 3 */}
+                        {wrappedSlide === 3 && (
+                          <motion.div
+                            key={`pwrap-3-${wrappedPlayer}-${wrappedYear}`}
+                            initial={{ opacity: 0, x: 24 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            exit={{ opacity: 0, x: -24 }}
+                            transition={{ duration: 0.32, ease: [0.16, 1, 0.3, 1] }}
+                            className="space-y-6"
+                          >
+                            <div>
+                              <span className="font-mono text-[11px] font-bold tracking-[0.2em] text-sky-300 uppercase">
+                                Chapter 04 · Personal Streaks &amp; Signature Stage
+                              </span>
+                              <h3 className="mt-1 font-display text-3xl font-bold text-white">
+                                Consistency &amp; Defining Moment
+                              </h3>
+                            </div>
+
+                            <div className="grid gap-4 md:grid-cols-3">
+                              <div className="rounded-2xl border border-emerald-400/35 bg-[#0b1915] p-5">
+                                <span className="font-mono text-[10px] font-bold text-emerald-300 uppercase">
+                                  Best Qual Streak
+                                </span>
+                                <p className="mt-2 font-mono text-3xl font-extrabold text-white">
+                                  {individualWrappedData.bestQualStreak} Quizzes
+                                </p>
+                              </div>
+                              <div className="rounded-2xl border border-[#d4af37]/35 bg-[#18140b] p-5">
+                                <span className="font-mono text-[10px] font-bold text-[#f5dc82] uppercase">
+                                  Unbroken Podium Run
+                                </span>
+                                <p className="mt-2 font-mono text-3xl font-extrabold text-[#f8e6a0]">
+                                  {individualWrappedData.bestPodiumStreak} Top-3
+                                </p>
+                              </div>
+                              <div className="rounded-2xl border border-white/15 bg-white/5 p-5">
+                                <span className="font-mono text-[10px] font-bold text-neutral-300 uppercase">
+                                  Strongest Host
+                                </span>
+                                <p className="mt-2 truncate font-display text-xl font-bold text-white">
+                                  {individualWrappedData.topHost?.host || '—'}
+                                </p>
+                                <p className="mt-1 font-mono text-xs text-neutral-400">
+                                  {individualWrappedData.topHost
+                                    ? `${individualWrappedData.topHost.total} visits · ${individualWrappedData.topHost.wins} Gold`
+                                    : 'No host'}
+                                </p>
+                              </div>
+                            </div>
+
+                            {individualWrappedData.signatureQuiz && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setSelectedQuiz(
+                                    individualWrappedData.signatureQuiz
+                                  )
+                                }
+                                className="block w-full rounded-2xl border border-[#d4af37]/50 bg-gradient-to-r from-[#1d1709] via-[#101c30] to-[#0a1322] p-6 text-left transition-colors hover:border-[#f8e6a0] cursor-pointer"
+                              >
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <span className="font-mono text-[11px] font-bold tracking-wider text-[#f5dc82] uppercase">
+                                    Personal Signature Quiz (Click to inspect)
+                                  </span>
+                                  <span className="font-mono text-xs font-bold text-sky-300">
+                                    Personal Rating:{' '}
+                                    {getPlayerQuizRating(
+                                      individualWrappedData.signatureQuiz,
+                                      individualWrappedData.player
+                                    )}
+                                    /10
+                                  </span>
+                                </div>
+                                <h4 className="mt-2 font-display text-2xl font-bold text-white">
+                                  {individualWrappedData.signatureQuiz.quizName}
+                                </h4>
+                                <p className="mt-1 text-xs text-neutral-300">
+                                  {individualWrappedData.signatureQuiz.position ===
+                                  'Not Qualified'
+                                    ? 'Not Qualified'
+                                    : `${individualWrappedData.signatureQuiz.position} Place`}{' '}
+                                  · {individualWrappedData.signatureQuiz.host} (
+                                  {individualWrappedData.signatureQuiz.yearBS} B.S.)
+                                </p>
+                              </button>
+                            )}
+                          </motion.div>
+                        )}
+
+                        {/* INDIVIDUAL SLIDE 4 */}
+                        {wrappedSlide === 4 && (
+                          <motion.div
+                            key={`pwrap-4-${wrappedPlayer}-${wrappedYear}`}
+                            initial={{ opacity: 0, x: 24 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            exit={{ opacity: 0, x: -24 }}
+                            transition={{ duration: 0.32, ease: [0.16, 1, 0.3, 1] }}
+                            className="space-y-6"
+                          >
+                            <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+                              <div>
+                                <span className="font-mono text-[11px] font-bold tracking-[0.2em] text-sky-300 uppercase">
+                                  Chapter 05 · Personal Souvenir Poster
+                                </span>
+                                <h3 className="mt-1 font-display text-3xl font-bold text-[#f8e6a0]">
+                                  {individualWrappedData.player} ·{' '}
+                                  {individualWrappedData.label}
+                                </h3>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={downloadIndividualWrappedPoster}
+                                className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#d4af37] to-[#f0cb65] px-5 py-3 text-xs font-bold text-[#08080a] shadow-[0_10px_30px_rgba(212,175,55,0.3)] transition-transform hover:scale-[1.02] cursor-pointer"
+                              >
+                                <Download className="h-4 w-4" />
+                                <span>Download Personal Wrapped (.png)</span>
+                              </button>
+                            </div>
+
+                            <div className="rounded-2xl border-2 border-[#d4af37]/50 bg-gradient-to-br from-[#0e1b2f] via-[#0b0c10] to-[#171209] p-6 sm:p-8">
+                              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#d4af37]/25 pb-4">
+                                <div>
+                                  <p className="font-mono text-[10px] tracking-[0.22em] text-[#d4af37] uppercase">
+                                    District Quiz Royale · Individual Recap
+                                  </p>
+                                  <p className="mt-1 font-display text-2xl font-bold text-white">
+                                    {individualWrappedData.player}
+                                  </p>
+                                </div>
+                                <div className="flex gap-2 font-mono text-xs">
+                                  <span className="rounded-lg border border-sky-400/35 bg-sky-500/10 px-3 py-1.5 font-bold text-sky-200">
+                                    {individualWrappedData.avgRating}/10 Avg Rating
+                                  </span>
+                                  <span className="rounded-lg border border-[#d4af37]/35 bg-[#d4af37]/15 px-3 py-1.5 font-bold text-[#f8e6a0]">
+                                    {individualWrappedData.purePoints} pts
+                                  </span>
+                                </div>
+                              </div>
+
+                              <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                                <div className="rounded-xl border border-white/10 bg-black/35 p-4">
+                                  <span className="font-mono text-[10px] text-neutral-400 uppercase">
+                                    Record
+                                  </span>
+                                  <p className="mt-1 font-mono text-lg font-bold text-white">
+                                    {individualWrappedData.totalQuizzes} Quizzes
+                                  </p>
+                                  <p className="mt-0.5 font-mono text-[11px] text-emerald-300">
+                                    {individualWrappedData.qualRate}% Qualified
+                                  </p>
+                                </div>
+
+                                <div className="rounded-xl border border-white/10 bg-black/35 p-4">
+                                  <span className="font-mono text-[10px] text-[#d4af37] uppercase">
+                                    Podiums
+                                  </span>
+                                  <p className="mt-1 font-mono text-lg font-bold text-[#f8e6a0]">
+                                    {individualWrappedData.podiums} Top-3
+                                  </p>
+                                  <p className="mt-0.5 font-mono text-[11px] text-neutral-300">
+                                    {individualWrappedData.first}G ·{' '}
+                                    {individualWrappedData.second}S ·{' '}
+                                    {individualWrappedData.third}B
+                                  </p>
+                                </div>
+
+                                <div className="rounded-xl border border-white/10 bg-black/35 p-4">
+                                  <span className="font-mono text-[10px] text-emerald-300 uppercase">
+                                    Best Partner
+                                  </span>
+                                  <p className="mt-1 truncate font-display text-base font-bold text-white">
+                                    {individualWrappedData.bestPartner?.name || '—'}
+                                  </p>
+                                  <p className="mt-0.5 font-mono text-[11px] text-emerald-200">
+                                    {individualWrappedData.bestPartner
+                                      ? `${individualWrappedData.bestPartner.podiums} Podiums`
+                                      : '—'}
+                                  </p>
+                                </div>
+
+                                <div className="rounded-xl border border-white/10 bg-black/35 p-4">
+                                  <span className="font-mono text-[10px] text-amber-300 uppercase">
+                                    Signature Moment
+                                  </span>
+                                  <p className="mt-1 truncate font-display text-base font-bold text-white">
+                                    {individualWrappedData.signatureQuiz
+                                      ?.quizName || '—'}
+                                  </p>
+                                  <p className="mt-0.5 font-mono text-[11px] text-neutral-300">
+                                    {individualWrappedData.signatureQuiz
+                                      ? `${individualWrappedData.signatureQuiz.position} · ${getPlayerQuizRating(individualWrappedData.signatureQuiz, individualWrappedData.player)}/10`
+                                      : '—'}
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                  </div>
+                )
+              ) : wrappedData.totalQuizzes === 0 ? (
                 <div className="mt-8 rounded-2xl border border-[#d4af37]/25 bg-[#100f0c] p-12 text-center">
                   <Sparkles className="mx-auto h-10 w-10 text-[#d4af37]/60" />
                   <h3 className="mt-3 font-display text-xl font-bold text-[#f8e6a0]">
@@ -4434,7 +5761,22 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const targetName = careerProfile.name;
+                      setWrappedPlayer(targetName);
+                      setWrappedYear('all');
+                      setWrappedSlide(0);
+                      setSelectedCareerPlayer(null);
+                      setSubTab('season-wrapped');
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-sky-400/45 bg-sky-500/15 px-3 py-2 text-xs font-semibold text-sky-200 transition-colors hover:bg-sky-500/25 cursor-pointer"
+                  >
+                    <Sparkles className="h-3.5 w-3.5" />
+                    <span>Player Wrapped</span>
+                  </button>
                   {uniquePlayers.length >= 2 && (
                     <button
                       type="button"
