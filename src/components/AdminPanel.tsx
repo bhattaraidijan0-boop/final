@@ -3,6 +3,8 @@ import { motion } from 'motion/react';
 import {
   CalendarPlus,
   Check,
+  CheckCircle2,
+  Clock,
   Copy,
   Database,
   Edit3,
@@ -12,9 +14,11 @@ import {
   RotateCcw,
   Send,
   Shield,
+  ShieldCheck,
   Trash2,
   Upload,
   UserPlus,
+  XCircle,
 } from 'lucide-react';
 import {
   AchievementDef,
@@ -22,9 +26,9 @@ import {
   ArchivedNewspaperEdition,
   AuctionItem,
   CertificateRecord,
+  ChallengeClaimRequest,
   ConfidenceLevel,
   DqrUser,
-  EgoReport,
   GalleryPhoto,
   IntroSettings,
   LevelRange,
@@ -106,8 +110,12 @@ interface AdminPanelProps {
   onSaveGuidance: (next: SystemGuidanceItem[]) => void;
   challenges: SystemChallenge[];
   onSaveChallenges: (next: SystemChallenge[]) => void;
-  egoReports: EgoReport[];
-  onSaveEgoReports: (next: EgoReport[]) => void;
+  challengeClaims: ChallengeClaimRequest[];
+  onReviewChallengeClaim: (
+    claimId: string,
+    decision: 'approved' | 'rejected',
+    adminNote?: string
+  ) => void;
   verdicts: VerdictRecord[];
   onSaveVerdicts: (next: VerdictRecord[]) => void;
 }
@@ -164,8 +172,8 @@ export function AdminPanel(props: AdminPanelProps) {
     onSaveGuidance,
     challenges,
     onSaveChallenges,
-    egoReports,
-    onSaveEgoReports,
+    challengeClaims,
+    onReviewChallengeClaim,
     verdicts,
     onSaveVerdicts,
   } = props;
@@ -294,10 +302,11 @@ export function AdminPanel(props: AdminPanelProps) {
 
   /* ---- 6. SYSTEM STATE ---- */
   const [sysAdminSub, setSysAdminSub] = useState<
-    'inbox' | 'predictions' | 'guidance' | 'challenges' | 'ego'
+    'inbox' | 'predictions' | 'guidance' | 'challenges' | 'verifications' | 'verdict'
   >('inbox');
   const [chatUserId, setChatUserId] = useState(users[1]?.id || users[0]?.id || '');
   const [adminReply, setAdminReply] = useState('');
+  const [claimAdminNotes, setClaimAdminNotes] = useState<Record<string, string>>({});
 
   // Prediction creator
   const [predTitle, setPredTitle] = useState('');
@@ -325,12 +334,8 @@ export function AdminPanel(props: AdminPanelProps) {
   const [chlCat, setChlCat] = useState<'Individual' | 'Competitive' | 'Territorial'>('Competitive');
   const [chlDiff, setChlDiff] = useState<'D-Rank' | 'B-Rank' | 'A-Rank' | 'S-Rank'>('A-Rank');
 
-  // Ego Report & Verdict state
-  const [egoTarget, setEgoTarget] = useState(users[1]?.id || users[0]?.id || '');
-  const [egoTitle, setEgoTitle] = useState('Cycle Evaluation Report');
-  const [egoNum, setEgoNum] = useState('EGO-2082-07');
-  const [egoAssess, setEgoAssess] = useState('');
-  const [egoFinal, setEgoFinal] = useState('');
+  // System Verdict state
+  const [verdictTarget, setVerdictTarget] = useState(users[1]?.id || users[0]?.id || '');
   const [verdictClass, setVerdictClass] =
     useState<VerdictClassification>('THE CONTENDER');
   const [verdictDesc, setVerdictDesc] = useState('');
@@ -448,13 +453,17 @@ export function AdminPanel(props: AdminPanelProps) {
     description: tDesc,
   };
 
-  const mainTabs: { id: AdminSubTab; label: string }[] = [
+  const pendingClaimsCount = challengeClaims.filter(
+    (c) => c.status === 'pending'
+  ).length;
+
+  const mainTabs: { id: AdminSubTab; label: string; badge?: number }[] = [
     { id: 'introduction', label: 'Introduction' },
     { id: 'hall-of-fame', label: 'Hall of Fame' },
     { id: 'ascension', label: 'Ascension Path' },
     { id: 'territories', label: 'Territories' },
     { id: 'newspaper', label: 'Newspaper' },
-    { id: 'system', label: 'System' },
+    { id: 'system', label: 'System', badge: pendingClaimsCount },
     { id: 'users', label: 'Users' },
   ];
 
@@ -516,13 +525,24 @@ export function AdminPanel(props: AdminPanelProps) {
                   key={t.id}
                   type="button"
                   onClick={() => setAdminTab(t.id)}
-                  className={`rounded-xl px-4 py-2 text-xs font-semibold transition-all whitespace-nowrap shrink-0 cursor-pointer sm:text-sm ${
+                  className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold transition-all whitespace-nowrap shrink-0 cursor-pointer sm:text-sm ${
                     active
                       ? 'bg-gradient-to-r from-[#d4af37] to-[#f0cb65] text-[#08080a] shadow-md'
                       : 'text-[#d4ccb8] hover:bg-white/5 hover:text-white'
                   }`}
                 >
-                  {t.label}
+                  <span>{t.label}</span>
+                  {typeof t.badge === 'number' && t.badge > 0 && (
+                    <span
+                      className={`rounded-md px-1.5 py-0.5 font-mono text-[10px] font-bold tabular-nums ${
+                        active
+                          ? 'bg-[#08080a]/15 text-[#08080a]'
+                          : 'bg-[#3988FF]/25 text-[#83B9FF]'
+                      }`}
+                    >
+                      {t.badge}
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -2851,20 +2871,36 @@ export function AdminPanel(props: AdminPanelProps) {
                   { id: 'predictions', label: 'Predictions' },
                   { id: 'guidance', label: 'Guidance & Directives' },
                   { id: 'challenges', label: 'Challenges' },
-                  { id: 'ego', label: 'Ego Reports & Verdict' },
-                ] as const
+                  {
+                    id: 'verifications',
+                    label: 'Verification Queue',
+                    badge: pendingClaimsCount,
+                  },
+                  { id: 'verdict', label: 'System Verdict' },
+                ] as { id: typeof sysAdminSub; label: string; badge?: number }[]
               ).map((sub) => (
                 <button
                   key={sub.id}
                   type="button"
                   onClick={() => setSysAdminSub(sub.id)}
-                  className={`rounded-lg px-3.5 py-1.5 text-xs font-semibold cursor-pointer ${
+                  className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-colors cursor-pointer ${
                     sysAdminSub === sub.id
                       ? 'bg-[#3988FF] text-white'
                       : 'text-neutral-300 hover:text-white'
                   }`}
                 >
-                  {sub.label}
+                  <span>{sub.label}</span>
+                  {typeof sub.badge === 'number' && sub.badge > 0 && (
+                    <span
+                      className={`rounded px-1.5 py-0.5 font-mono text-[10px] font-bold tabular-nums ${
+                        sysAdminSub === sub.id
+                          ? 'bg-white/20 text-white'
+                          : 'bg-amber-400/20 text-amber-300'
+                      }`}
+                    >
+                      {sub.badge}
+                    </span>
+                  )}
                 </button>
               ))}
             </div>
@@ -3473,88 +3509,256 @@ export function AdminPanel(props: AdminPanelProps) {
               </div>
             )}
 
-            {/* Ego Reports & Custom Destiny / Verdict Assignment */}
-            {sysAdminSub === 'ego' && (
-              <div className="grid gap-6 lg:grid-cols-12">
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    if (!egoAssess.trim()) return;
-                    onSaveEgoReports([
-                      {
-                        id: `ego-${Date.now()}`,
-                        reportNumber: egoNum,
-                        title: egoTitle,
-                        publishedAt: new Date().toISOString().slice(0, 10),
-                        period: 'Current Cycle',
-                        shortPreview: egoAssess.slice(0, 90),
-                        targetUserId: egoTarget,
-                        overallAssessment: egoAssess,
-                        strengths: 'Verified daily discipline and accuracy.',
-                        weaknesses: 'Needs tighter consistency in tie-breakers.',
-                        competitiveStanding: 'Active DQR contender.',
-                        progression: 'Positive upward trend.',
-                        finalVerdict:
-                          egoFinal ||
-                          'CONVERT POTENTIAL INTO UNMISTAKABLE RESULTS.',
-                        published: true,
-                      },
-                      ...egoReports,
-                    ]);
-                    setEgoAssess('');
-                    setEgoFinal('');
-                    showToast('Ego Report published.');
-                  }}
-                  className="space-y-3 rounded-2xl border border-[#3988FF]/30 bg-[#100f0c] p-6 lg:col-span-6"
-                >
-                  <h3 className="font-display text-lg font-bold text-[#83B9FF]">
-                    Issue Ego Evaluation Report
-                  </h3>
-                  <select
-                    value={egoTarget}
-                    onChange={(e) => setEgoTarget(e.target.value)}
-                    className="w-full rounded-xl border border-white/15 bg-[#16140f] px-3 py-2 text-xs text-white"
-                  >
-                    {users.map((u) => (
-                      <option key={u.id} value={u.id}>
-                        {u.fullName}
-                      </option>
-                    ))}
-                  </select>
-                  <div className="grid grid-cols-2 gap-2">
-                    <input
-                      value={egoNum}
-                      onChange={(e) => setEgoNum(e.target.value)}
-                      className="rounded-xl border border-white/15 bg-[#16140f] px-3 py-2 font-mono text-xs text-white"
-                    />
-                    <input
-                      value={egoTitle}
-                      onChange={(e) => setEgoTitle(e.target.value)}
-                      className="rounded-xl border border-white/15 bg-[#16140f] px-3 py-2 text-xs text-white"
-                    />
-                  </div>
-                  <textarea
-                    rows={3}
-                    value={egoAssess}
-                    onChange={(e) => setEgoAssess(e.target.value)}
-                    placeholder="Overall Assessment..."
-                    className="w-full rounded-xl border border-white/15 bg-[#16140f] px-3 py-2 text-xs text-white"
-                  />
-                  <input
-                    value={egoFinal}
-                    onChange={(e) => setEgoFinal(e.target.value)}
-                    placeholder="Final Verdict Line..."
-                    className="w-full rounded-xl border border-white/15 bg-[#16140f] px-3 py-2 text-xs text-white"
-                  />
-                  <button
-                    type="submit"
-                    className="rounded-xl bg-[#3988FF] px-4 py-2 text-xs font-bold text-white cursor-pointer"
-                  >
-                    Publish Ego Report
-                  </button>
-                </form>
+            {/* Verification Queue (Approve / Reject Challenge XP Claims) */}
+            {sysAdminSub === 'verifications' && (() => {
+              const pendingClaims = [...challengeClaims]
+                .filter((c) => c.status === 'pending')
+                .sort((a, b) => b.submittedAt - a.submittedAt);
+              const historyClaims = [...challengeClaims]
+                .filter((c) => c.status !== 'pending')
+                .sort(
+                  (a, b) =>
+                    (b.reviewedAt || b.submittedAt) -
+                    (a.reviewedAt || a.submittedAt)
+                );
 
-                {/* Assign Custom Destiny / Competitive Identity Verdict */}
+              return (
+                <div className="space-y-6">
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <div className="rounded-2xl border border-amber-400/35 bg-[#100f0c] p-4">
+                      <span className="font-mono text-[10px] text-amber-300 uppercase">
+                        Pending Review
+                      </span>
+                      <p className="mt-1 font-mono text-2xl font-extrabold text-white">
+                        {pendingClaims.length}
+                      </p>
+                    </div>
+                    <div className="rounded-2xl border border-emerald-400/30 bg-[#100f0c] p-4">
+                      <span className="font-mono text-[10px] text-emerald-300 uppercase">
+                        Approved Claims
+                      </span>
+                      <p className="mt-1 font-mono text-2xl font-extrabold text-white">
+                        {
+                          challengeClaims.filter((c) => c.status === 'approved')
+                            .length
+                        }
+                      </p>
+                    </div>
+                    <div className="rounded-2xl border border-rose-400/30 bg-[#100f0c] p-4">
+                      <span className="font-mono text-[10px] text-rose-300 uppercase">
+                        Rejected Claims
+                      </span>
+                      <p className="mt-1 font-mono text-2xl font-extrabold text-white">
+                        {
+                          challengeClaims.filter((c) => c.status === 'rejected')
+                            .length
+                        }
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-[#3988FF]/30 bg-[#100f0c] p-6">
+                    <div className="flex items-center justify-between gap-2 border-b border-white/10 pb-4">
+                      <div className="flex items-center gap-2.5">
+                        <ShieldCheck className="h-5 w-5 text-[#83B9FF]" />
+                        <div>
+                          <h3 className="font-display text-lg font-bold text-[#83B9FF]">
+                            Pending Challenge XP Claims
+                          </h3>
+                          <p className="text-xs text-neutral-400">
+                            Verify member completion before releasing Challenge
+                            XP rewards.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {pendingClaims.length === 0 ? (
+                      <div className="py-10 text-center text-xs text-neutral-400">
+                        All caught up — no Challenge XP claims awaiting
+                        verification.
+                      </div>
+                    ) : (
+                      <div className="mt-4 space-y-3">
+                        {pendingClaims.map((cl) => {
+                          const member = users.find((u) => u.id === cl.userId);
+                          const chl = challenges.find(
+                            (c) => c.id === cl.challengeId
+                          );
+                          const noteVal = claimAdminNotes[cl.id] || '';
+                          return (
+                            <motion.div
+                              key={cl.id}
+                              initial={{ opacity: 0, y: 8 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              className="rounded-xl border border-amber-400/30 bg-[#16140f] p-4"
+                            >
+                              <div className="flex flex-wrap items-start justify-between gap-3">
+                                <div>
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <span className="font-semibold text-white">
+                                      {member?.fullName || 'Unknown Member'}
+                                    </span>
+                                    {member && (
+                                      <span className="font-mono text-[11px] text-neutral-400">
+                                        @{member.username} · {member.xp} XP
+                                      </span>
+                                    )}
+                                    <span className="inline-flex items-center gap-1 rounded bg-amber-400/15 px-2 py-0.5 font-mono text-[10px] font-bold text-amber-300">
+                                      <Clock className="h-3 w-3" />
+                                      PENDING
+                                    </span>
+                                  </div>
+                                  <p className="mt-1.5 text-sm font-bold text-[#83B9FF]">
+                                    {chl?.title || 'Challenge Removed'}
+                                    {chl && (
+                                      <span className="ml-2 font-mono text-xs text-emerald-300">
+                                        +{chl.rewardXp} XP
+                                      </span>
+                                    )}
+                                  </p>
+                                  {chl && (
+                                    <p className="mt-0.5 text-[11px] text-neutral-400">
+                                      Requirement: {chl.requirementText}
+                                    </p>
+                                  )}
+                                  {cl.note && (
+                                    <p className="mt-2 rounded-lg border border-white/10 bg-black/35 px-3 py-1.5 text-xs text-neutral-200">
+                                      Member proof: “{cl.note}”
+                                    </p>
+                                  )}
+                                </div>
+
+                                <span className="font-mono text-[10px] text-neutral-400">
+                                  {new Date(cl.submittedAt).toLocaleString()}
+                                </span>
+                              </div>
+
+                              <div className="mt-3 flex flex-col gap-2 border-t border-white/10 pt-3 sm:flex-row sm:items-center">
+                                <input
+                                  type="text"
+                                  value={noteVal}
+                                  onChange={(e) =>
+                                    setClaimAdminNotes((prev) => ({
+                                      ...prev,
+                                      [cl.id]: e.target.value,
+                                    }))
+                                  }
+                                  placeholder="Optional verification note / feedback..."
+                                  className="flex-1 rounded-lg border border-white/15 bg-[#0f0e0b] px-3 py-1.5 text-xs text-white"
+                                />
+                                <div className="flex gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      onReviewChallengeClaim(
+                                        cl.id,
+                                        'approved',
+                                        noteVal
+                                      );
+                                      setClaimAdminNotes((prev) => {
+                                        const next = { ...prev };
+                                        delete next[cl.id];
+                                        return next;
+                                      });
+                                    }}
+                                    className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500 px-3.5 py-1.5 text-xs font-bold text-[#071310] transition-colors hover:bg-emerald-400 cursor-pointer"
+                                  >
+                                    <CheckCircle2 className="h-3.5 w-3.5" />
+                                    <span>
+                                      Approve &amp; Grant{' '}
+                                      {chl ? `+${chl.rewardXp} XP` : 'XP'}
+                                    </span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      onReviewChallengeClaim(
+                                        cl.id,
+                                        'rejected',
+                                        noteVal
+                                      );
+                                      setClaimAdminNotes((prev) => {
+                                        const next = { ...prev };
+                                        delete next[cl.id];
+                                        return next;
+                                      });
+                                    }}
+                                    className="inline-flex items-center gap-1.5 rounded-lg border border-rose-400/40 bg-rose-500/15 px-3 py-1.5 text-xs font-semibold text-rose-200 transition-colors hover:bg-rose-500/25 cursor-pointer"
+                                  >
+                                    <XCircle className="h-3.5 w-3.5" />
+                                    <span>Reject</span>
+                                  </button>
+                                </div>
+                              </div>
+                            </motion.div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  {historyClaims.length > 0 && (
+                    <div className="rounded-2xl border border-white/10 bg-[#100f0c] p-6">
+                      <h4 className="font-mono text-xs font-bold text-neutral-300 uppercase">
+                        Recent Verification Log
+                      </h4>
+                      <div className="mt-3 space-y-2">
+                        {historyClaims.slice(0, 15).map((cl) => {
+                          const member = users.find((u) => u.id === cl.userId);
+                          const chl = challenges.find(
+                            (c) => c.id === cl.challengeId
+                          );
+                          return (
+                            <div
+                              key={cl.id}
+                              className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-[#16140f] px-3.5 py-2.5 text-xs"
+                            >
+                              <div>
+                                <span className="font-semibold text-white">
+                                  {member?.fullName || 'Member'}
+                                </span>{' '}
+                                <span className="text-neutral-400">·</span>{' '}
+                                <span className="text-[#83B9FF]">
+                                  {chl?.title || 'Challenge'}
+                                </span>
+                                {cl.adminNote && (
+                                  <span className="ml-2 text-neutral-400">
+                                    (“{cl.adminNote}”)
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-2 font-mono text-[11px]">
+                                <span
+                                  className={
+                                    cl.status === 'approved'
+                                      ? 'text-emerald-300'
+                                      : 'text-rose-300'
+                                  }
+                                >
+                                  {cl.status === 'approved'
+                                    ? `APPROVED (+${chl?.rewardXp || 0} XP)`
+                                    : 'REJECTED'}
+                                </span>
+                                <span className="text-neutral-500">
+                                  {new Date(
+                                    cl.reviewedAt || cl.submittedAt
+                                  ).toLocaleDateString()}
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* Assign Custom Destiny / System Verdict */}
+            {sysAdminSub === 'verdict' && (
+              <div className="grid gap-6 lg:grid-cols-12">
                 <form
                   onSubmit={(e) => {
                     e.preventDefault();
@@ -3562,7 +3766,7 @@ export function AdminPanel(props: AdminPanelProps) {
                     if (!finalDestiny) return;
                     const today = new Date().toISOString().slice(0, 10);
                     const existing = verdicts.find(
-                      (v) => v.userId === egoTarget
+                      (v) => v.userId === verdictTarget
                     );
                     const updated: VerdictRecord = existing
                       ? {
@@ -3587,7 +3791,7 @@ export function AdminPanel(props: AdminPanelProps) {
                           ],
                         }
                       : {
-                          userId: egoTarget,
+                          userId: verdictTarget,
                           classification: finalDestiny,
                           description:
                             verdictDesc ||
@@ -3609,19 +3813,19 @@ export function AdminPanel(props: AdminPanelProps) {
                           ],
                         };
                     onSaveVerdicts([
-                      ...verdicts.filter((v) => v.userId !== egoTarget),
+                      ...verdicts.filter((v) => v.userId !== verdictTarget),
                       updated,
                     ]);
                     showToast(`Assigned Destiny "${finalDestiny}".`);
                   }}
-                  className="space-y-3 rounded-2xl border border-[#3988FF]/30 bg-[#100f0c] p-6 lg:col-span-6"
+                  className="space-y-3 rounded-2xl border border-[#3988FF]/30 bg-[#100f0c] p-6 lg:col-span-7"
                 >
                   <h3 className="font-display text-lg font-bold text-[#83B9FF]">
                     Assign Custom Destiny / System Verdict
                   </h3>
                   <select
-                    value={egoTarget}
-                    onChange={(e) => setEgoTarget(e.target.value)}
+                    value={verdictTarget}
+                    onChange={(e) => setVerdictTarget(e.target.value)}
                     className="w-full rounded-xl border border-white/15 bg-[#16140f] px-3 py-2 text-xs text-white"
                   >
                     {users.map((u) => (
@@ -3729,6 +3933,35 @@ export function AdminPanel(props: AdminPanelProps) {
                     Assign System Destiny
                   </button>
                 </form>
+
+                <div className="space-y-3 rounded-2xl border border-[#3988FF]/30 bg-[#100f0c] p-6 lg:col-span-5">
+                  <h4 className="font-mono text-xs font-bold text-[#83B9FF] uppercase">
+                    Current Member Verdicts
+                  </h4>
+                  <div className="space-y-2.5">
+                    {users.map((u) => {
+                      const v = verdicts.find((item) => item.userId === u.id);
+                      return (
+                        <div
+                          key={u.id}
+                          className="flex items-center justify-between rounded-xl bg-[#16140f] px-3.5 py-2.5 text-xs"
+                        >
+                          <div>
+                            <p className="font-semibold text-white">
+                              {u.fullName}
+                            </p>
+                            <p className="font-mono text-[10px] text-neutral-400">
+                              @{u.username}
+                            </p>
+                          </div>
+                          <span className="rounded-lg border border-[#3988FF]/35 bg-[#3988FF]/15 px-2.5 py-1 font-mono text-[10px] font-bold text-[#83B9FF]">
+                            {v?.classification || 'UNASSIGNED'}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
             )}
           </div>
