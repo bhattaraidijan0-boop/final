@@ -258,6 +258,8 @@ export default function App() {
   const supabaseHydratedRef = useRef(false);
   const usersRef = useRef(users);
   usersRef.current = users;
+  const quizzesRef = useRef(quizzes);
+  quizzesRef.current = quizzes;
   const lastSyncedJsonRef = useRef<Record<string, string>>({});
   const lastSyncedUsersJsonRef = useRef<string>('');
   const lastSyncedQuizzesJsonRef = useRef<string>('');
@@ -298,9 +300,11 @@ export default function App() {
     if (isChanged(STORAGE_KEYS.years))
       setBsYears(remote[STORAGE_KEYS.years] as string[]);
     if (isChanged(STORAGE_KEYS.quizzes)) {
+      const nextQuizzes = remote[STORAGE_KEYS.quizzes] as QuizRecord[];
       lastSyncedQuizzesJsonRef.current =
         lastSyncedJsonRef.current[STORAGE_KEYS.quizzes];
-      setQuizzes(remote[STORAGE_KEYS.quizzes] as QuizRecord[]);
+      quizzesRef.current = nextQuizzes;
+      setQuizzes(nextQuizzes);
     }
     if (isChanged(STORAGE_KEYS.gallery))
       setGallery(remote[STORAGE_KEYS.gallery] as GalleryPhoto[]);
@@ -380,7 +384,24 @@ export default function App() {
       merged[STORAGE_KEYS.users] = tableUsers;
     }
     if (tableQuizzes && tableQuizzes.length > 0) {
-      merged[STORAGE_KEYS.quizzes] = tableQuizzes;
+      const storeQuizzes = Array.isArray(remote[STORAGE_KEYS.quizzes])
+        ? (remote[STORAGE_KEYS.quizzes] as QuizRecord[])
+        : [];
+      const ratingsById = new Map<string, Record<string, number>>();
+      for (const q of quizzesRef.current) {
+        if (q.playerRatings && Object.keys(q.playerRatings).length > 0) {
+          ratingsById.set(q.id, q.playerRatings);
+        }
+      }
+      for (const q of storeQuizzes) {
+        if (q.playerRatings && Object.keys(q.playerRatings).length > 0) {
+          ratingsById.set(q.id, q.playerRatings);
+        }
+      }
+      merged[STORAGE_KEYS.quizzes] = tableQuizzes.map((q) => {
+        const preservedRatings = ratingsById.get(q.id);
+        return preservedRatings ? { ...q, playerRatings: preservedRatings } : q;
+      });
     }
     if (tableTerritories && tableTerritories.length > 0) {
       merged[STORAGE_KEYS.territories] = tableTerritories;
@@ -460,7 +481,25 @@ export default function App() {
             | { store_key?: string; payload?: unknown }
             | undefined;
           if (!row?.store_key || row.payload === undefined) return;
-          // Dedicated tables stay authoritative over monolithic JSON copies
+          // Dedicated tables stay authoritative over monolithic JSON copies,
+          // except quizzes playerRatings which live in dqr_app_store until table schema includes them
+          if (row.store_key === STORAGE_KEYS.quizzes && Array.isArray(row.payload)) {
+            const incoming = row.payload as QuizRecord[];
+            const ratingsById = new Map<string, Record<string, number>>();
+            for (const item of incoming) {
+              if (item.playerRatings && Object.keys(item.playerRatings).length > 0) {
+                ratingsById.set(item.id, item.playerRatings);
+              }
+            }
+            if (ratingsById.size > 0) {
+              const patched = quizzesRef.current.map((q) => {
+                const r = ratingsById.get(q.id);
+                return r ? { ...q, playerRatings: r } : q;
+              });
+              applyRemoteStore({ [STORAGE_KEYS.quizzes]: patched });
+            }
+            return;
+          }
           if (
             row.store_key === STORAGE_KEYS.users ||
             row.store_key === STORAGE_KEYS.quizzes ||
@@ -499,7 +538,17 @@ export default function App() {
         () => {
           void loadQuizzesFromSupabaseTable().then((list) => {
             if (list && list.length > 0) {
-              applyRemoteStore({ [STORAGE_KEYS.quizzes]: list });
+              const ratingsById = new Map<string, Record<string, number>>();
+              for (const q of quizzesRef.current) {
+                if (q.playerRatings && Object.keys(q.playerRatings).length > 0) {
+                  ratingsById.set(q.id, q.playerRatings);
+                }
+              }
+              const mergedList = list.map((q) => {
+                const preserved = ratingsById.get(q.id);
+                return preserved ? { ...q, playerRatings: preserved } : q;
+              });
+              applyRemoteStore({ [STORAGE_KEYS.quizzes]: mergedList });
             }
           });
         }
@@ -1020,11 +1069,23 @@ export default function App() {
 
   const handleRemovePlayerFromQuiz = (quizId: string, playerName: string) => {
     setQuizzes((prev) =>
-      prev.map((q) =>
-        q.id === quizId
-          ? { ...q, players: q.players.filter((p) => p !== playerName) }
-          : q
-      )
+      prev.map((q) => {
+        if (q.id !== quizId) return q;
+        const targetLower = playerName.trim().toLowerCase();
+        const nextRatings = q.playerRatings ? { ...q.playerRatings } : undefined;
+        if (nextRatings) {
+          for (const key of Object.keys(nextRatings)) {
+            if (key.trim().toLowerCase() === targetLower) {
+              delete nextRatings[key];
+            }
+          }
+        }
+        return {
+          ...q,
+          players: q.players.filter((p) => p !== playerName),
+          ...(nextRatings ? { playerRatings: nextRatings } : {}),
+        };
+      })
     );
   };
 
