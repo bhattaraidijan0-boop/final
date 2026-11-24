@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { motion } from 'motion/react';
+import { MotionConfig, motion } from 'motion/react';
 import { Lock, LogOut, Menu, X } from 'lucide-react';
 import {
   AchievementDef,
   ArchivedNewspaperEdition,
   AuctionItem,
   CertificateRecord,
+  ChallengeClaimRequest,
   DqrUser,
-  EgoReport,
   GalleryPhoto,
   IntroSettings,
   LevelRange,
@@ -46,7 +46,6 @@ import {
   INITIAL_AUCTIONS,
   INITIAL_BS_YEARS,
   INITIAL_CHALLENGES,
-  INITIAL_EGO_REPORTS,
   INITIAL_GALLERY,
   INITIAL_GUIDANCE,
   INITIAL_INTRO_SETTINGS,
@@ -136,7 +135,7 @@ const STORAGE_KEYS = {
   predictions: 'dqr_v2_predictions',
   guidance: 'dqr_v2_guidance',
   challenges: 'dqr_v2_challenges',
-  egoReports: 'dqr_v2_ego_reports',
+  challengeClaims: 'dqr_v2_challenge_claims',
   verdicts: 'dqr_v2_verdicts',
   rivalries: 'dqr_v2_rivalries',
   weeklyTrackers: 'dqr_v2_weekly_trackers',
@@ -240,8 +239,8 @@ export default function App() {
   const [challenges, setChallenges] = useState<SystemChallenge[]>(() =>
     loadStored(STORAGE_KEYS.challenges, INITIAL_CHALLENGES)
   );
-  const [egoReports, setEgoReports] = useState<EgoReport[]>(() =>
-    loadStored(STORAGE_KEYS.egoReports, INITIAL_EGO_REPORTS)
+  const [challengeClaims, setChallengeClaims] = useState<ChallengeClaimRequest[]>(
+    () => loadStored(STORAGE_KEYS.challengeClaims, [])
   );
   const [verdicts, setVerdicts] = useState<VerdictRecord[]>(() =>
     loadStored(STORAGE_KEYS.verdicts, INITIAL_VERDICTS)
@@ -353,8 +352,10 @@ export default function App() {
       setGuidance(remote[STORAGE_KEYS.guidance] as SystemGuidanceItem[]);
     if (isChanged(STORAGE_KEYS.challenges))
       setChallenges(remote[STORAGE_KEYS.challenges] as SystemChallenge[]);
-    if (isChanged(STORAGE_KEYS.egoReports))
-      setEgoReports(remote[STORAGE_KEYS.egoReports] as EgoReport[]);
+    if (isChanged(STORAGE_KEYS.challengeClaims))
+      setChallengeClaims(
+        remote[STORAGE_KEYS.challengeClaims] as ChallengeClaimRequest[]
+      );
     if (isChanged(STORAGE_KEYS.verdicts))
       setVerdicts(remote[STORAGE_KEYS.verdicts] as VerdictRecord[]);
     if (isChanged(STORAGE_KEYS.rivalries))
@@ -635,7 +636,7 @@ export default function App() {
       [STORAGE_KEYS.predictions, predictions],
       [STORAGE_KEYS.guidance, guidance],
       [STORAGE_KEYS.challenges, challenges],
-      [STORAGE_KEYS.egoReports, egoReports],
+      [STORAGE_KEYS.challengeClaims, challengeClaims],
       [STORAGE_KEYS.verdicts, verdicts],
       [STORAGE_KEYS.rivalries, rivalries],
       [STORAGE_KEYS.weeklyTrackers, weeklyTrackers],
@@ -715,7 +716,7 @@ export default function App() {
     predictions,
     guidance,
     challenges,
-    egoReports,
+    challengeClaims,
     verdicts,
     rivalries,
     weeklyTrackers,
@@ -990,11 +991,20 @@ export default function App() {
         (r) => r.status === 'pending' && r.recipientId === currentUser.id
       ).length
     : 0;
+  const pendingChallengeClaimsCount = challengeClaims.filter(
+    (cl) => cl.status === 'pending'
+  ).length;
   const unclaimedChallenges = currentUser
     ? challenges.filter(
         (c) =>
           (c.targetUserId === 'all' || c.targetUserId === currentUser.id) &&
-          !c.completedByUserIds.includes(currentUser.id)
+          !c.completedByUserIds.includes(currentUser.id) &&
+          !challengeClaims.some(
+            (cl) =>
+              cl.challengeId === c.id &&
+              cl.userId === currentUser.id &&
+              cl.status === 'pending'
+          )
       ).length
     : 0;
   const systemAlertCount =
@@ -1367,20 +1377,100 @@ export default function App() {
     );
   };
 
-  const handleClaimChallenge = (challengeId: string, userId: string) => {
+  const handleClaimChallenge = (
+    challengeId: string,
+    userId: string,
+    note?: string
+  ) => {
     const chl = challenges.find((c) => c.id === challengeId);
-    const u = users.find((x) => x.id === userId);
+    const u = usersRef.current.find((x) => x.id === userId);
     if (!chl || !u || chl.completedByUserIds.includes(userId)) return;
 
-    setChallenges((prev) =>
-      prev.map((c) =>
-        c.id === challengeId
-          ? { ...c, completedByUserIds: [...c.completedByUserIds, userId] }
-          : c
+    const alreadyPending = challengeClaims.some(
+      (cl) =>
+        cl.challengeId === challengeId &&
+        cl.userId === userId &&
+        cl.status === 'pending'
+    );
+    if (alreadyPending) {
+      pushToast('Claim is already pending Admin verification.', 'blue');
+      return;
+    }
+
+    const request: ChallengeClaimRequest = {
+      id: `claim-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      challengeId,
+      userId,
+      submittedAt: Date.now(),
+      note: note?.trim() || undefined,
+      status: 'pending',
+    };
+    setChallengeClaims((prev) => [request, ...prev]);
+    pushToast(
+      `Claim submitted for “${chl.title}”. Awaiting Admin verification.`,
+      'blue'
+    );
+  };
+
+  const handleReviewChallengeClaim = (
+    claimId: string,
+    decision: 'approved' | 'rejected',
+    adminNote?: string
+  ) => {
+    const targetClaim = challengeClaims.find((cl) => cl.id === claimId);
+    if (!targetClaim || targetClaim.status !== 'pending') return;
+
+    const chl = challenges.find((c) => c.id === targetClaim.challengeId);
+    const targetUser = usersRef.current.find((u) => u.id === targetClaim.userId);
+
+    setChallengeClaims((prev) =>
+      prev.map((cl) =>
+        cl.id === claimId
+          ? {
+              ...cl,
+              status: decision,
+              reviewedAt: Date.now(),
+              reviewedByUserId: currentUser?.id,
+              adminNote: adminNote?.trim() || undefined,
+            }
+          : cl
       )
     );
-    handleUpdateUserAny(userId, { xp: u.xp + chl.rewardXp });
-    pushToast(`Challenge reward claimed (+${chl.rewardXp} XP).`, 'emerald');
+
+    if (decision === 'approved') {
+      if (chl && !chl.completedByUserIds.includes(targetClaim.userId)) {
+        setChallenges((prev) =>
+          prev.map((c) =>
+            c.id === chl.id
+              ? {
+                  ...c,
+                  completedByUserIds: c.completedByUserIds.includes(
+                    targetClaim.userId
+                  )
+                    ? c.completedByUserIds
+                    : [...c.completedByUserIds, targetClaim.userId],
+                }
+              : c
+          )
+        );
+      }
+      if (targetUser && chl) {
+        handleUpdateUserAny(targetUser.id, {
+          xp: targetUser.xp + chl.rewardXp,
+        });
+        pushToast(
+          `Verified ${targetUser.fullName} · Awarded +${chl.rewardXp} XP.`,
+          'emerald'
+        );
+      } else {
+        pushToast('Challenge claim approved.', 'emerald');
+      }
+    } else {
+      pushToast(
+        `Claim rejected${targetUser ? ` for ${targetUser.fullName}` : ''}.`,
+        'gold'
+      );
+    }
   };
 
   /* ---- RIVAL HANDLERS ---- */
@@ -1623,10 +1713,21 @@ export default function App() {
       badgeCount: systemAlertCount,
       pulseTone: systemAlertCount > 0 ? 'blue' : undefined,
     },
-    ...(isAdmin ? [{ id: 'admin' as MainTab, label: 'Admin' }] : []),
+    ...(isAdmin
+      ? [
+          {
+            id: 'admin' as MainTab,
+            label: 'Admin',
+            badgeCount: pendingChallengeClaimsCount,
+            pulseTone:
+              pendingChallengeClaimsCount > 0 ? ('blue' as const) : undefined,
+          },
+        ]
+      : []),
   ];
 
   return (
+    <MotionConfig reducedMotion="user">
     <div className="min-h-screen bg-[#08080a] text-[#f5f2eb]">
       {/* TOP NAVIGATION BAR */}
       <header className="sticky top-0 z-40 border-b border-[#d4af37]/25 bg-[#08080a]/95 backdrop-blur-md">
@@ -1799,9 +1900,9 @@ export default function App() {
       <main>
         <motion.div
           key={activeTab}
-          initial={{ opacity: 0, y: 8 }}
+          initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+          transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
         >
         {activeTab === 'home' && (
           <IntroductionPage
@@ -1901,7 +2002,7 @@ export default function App() {
             predictions={predictions}
             guidance={guidance}
             challenges={challenges}
-            egoReports={egoReports}
+            challengeClaims={challengeClaims}
             verdict={verdicts.find((v) => v.userId === currentUser.id)}
             quizzes={quizzes}
             territories={territories}
@@ -1985,8 +2086,8 @@ export default function App() {
             onSaveGuidance={setGuidance}
             challenges={challenges}
             onSaveChallenges={setChallenges}
-            egoReports={egoReports}
-            onSaveEgoReports={setEgoReports}
+            challengeClaims={challengeClaims}
+            onReviewChallengeClaim={handleReviewChallengeClaim}
             verdicts={verdicts}
             onSaveVerdicts={setVerdicts}
           />
@@ -2034,5 +2135,6 @@ export default function App() {
       <OfflineIndicator />
       <ToastHost toasts={toasts} onDismiss={dismissToast} />
     </div>
+    </MotionConfig>
   );
 }
