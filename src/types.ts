@@ -296,21 +296,18 @@ export interface SystemChallenge {
   completedByUserIds: string[];
 }
 
-export interface EgoReport {
+export type ChallengeClaimStatus = 'pending' | 'approved' | 'rejected';
+
+export interface ChallengeClaimRequest {
   id: string;
-  reportNumber: string;
-  title: string;
-  publishedAt: string;
-  period: string;
-  shortPreview: string;
-  targetUserId: string;
-  overallAssessment: string;
-  strengths: string;
-  weaknesses: string;
-  competitiveStanding: string;
-  progression: string;
-  finalVerdict: string;
-  published: boolean;
+  challengeId: string;
+  userId: string;
+  submittedAt: number;
+  note?: string;
+  status: ChallengeClaimStatus;
+  reviewedAt?: number;
+  reviewedByUserId?: string;
+  adminNote?: string;
 }
 
 export type VerdictClassification = string;
@@ -486,7 +483,6 @@ export type SystemSubTab =
   | 'predictions'
   | 'guidance'
   | 'challenges'
-  | 'ego-reports'
   | 'verdict'
   | 'rival';
 
