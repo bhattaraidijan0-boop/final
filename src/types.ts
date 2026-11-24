@@ -18,6 +18,7 @@ export interface QuizRecord {
   players: string[];
   teamCount: number;
   rating: number;
+  playerRatings?: Record<string, number>;
   extraNote: string;
   photos: string[];
   createdAt: number; // timestamp for tie-breaker priority
