@@ -7,6 +7,7 @@ import {
   Calendar,
   ChevronLeft,
   ChevronRight,
+  Compass,
   Crown,
   Download,
   FilterX,
@@ -14,7 +15,9 @@ import {
   Image as ImageIcon,
   Layers,
   MapPin,
+  MinusCircle,
   Search,
+  Shield,
   Sparkles,
   Star,
   Swords,
@@ -71,37 +74,210 @@ function getPlayerQuizRating(quiz: QuizRecord, playerName: string): number {
   return Math.min(10, Math.max(1, Math.round((quiz.rating || 8) * 10) / 10));
 }
 
-function formatBareMinimumPlacements(
+interface BareMinimumSlot {
+  position: QuizPosition;
+  count: number;
+  pointsPerQuiz: number;
+}
+
+const POSITION_BY_POINTS: Record<number, QuizPosition> = {
+  6: '1st',
+  5: '2nd',
+  4: '3rd',
+  3: '4th',
+  2: '5th',
+  1: '6th',
+  0: 'Not Qualified',
+};
+
+/**
+ * Distributes exact targetPoints across quizSlots starting from the lowest
+ * possible positions (6th -> 5th -> 4th -> 3rd -> 2nd -> 1st) so the player
+ * hits the target barely and evenly without inflating required top finishes.
+ * Example: 20 pts across 5 quizzes => 5 × 3rd (4 pts each = 20 pts).
+ */
+function computeBareMinimumSlots(
   targetPoints: number,
   quizSlots: number
-): string {
-  if (targetPoints <= 0 || quizSlots <= 0) return '0 points needed';
-  const firstCount = Math.floor(targetPoints / 6);
-  const rem = targetPoints % 6;
-  const remLabel =
-    rem === 5
-      ? '2nd'
-      : rem === 4
-        ? '3rd'
-        : rem === 3
-          ? '4th'
-          : rem === 2
-            ? '5th'
-            : rem === 1
-              ? '6th'
-              : '';
-  const usedSlots = firstCount + (rem > 0 ? 1 : 0);
-  const leftover = Math.max(0, quizSlots - usedSlots);
+): BareMinimumSlot[] {
+  if (targetPoints <= 0 || quizSlots <= 0) return [];
+  if (targetPoints > quizSlots * 6) return [];
 
-  const parts: string[] = [];
-  if (firstCount > 0) parts.push(`${firstCount} 1st`);
-  if (rem > 0) parts.push(`1 ${remLabel}`);
-  if (leftover > 0) parts.push(`${leftover} Not Qualified`);
+  const base = Math.floor(targetPoints / quizSlots);
+  const extra = targetPoints % quizSlots;
+  const slots: BareMinimumSlot[] = [];
 
-  if (parts.length === 0) return '0 points needed';
-  if (parts.length === 1) return parts[0];
-  if (parts.length === 2) return `${parts[0]} and ${parts[1]}`;
-  return `${parts.slice(0, -1).join(', ')}, and ${parts[parts.length - 1]}`;
+  if (extra > 0) {
+    const pts = base + 1;
+    slots.push({
+      position: POSITION_BY_POINTS[pts] || '1st',
+      count: extra,
+      pointsPerQuiz: pts,
+    });
+  }
+
+  const baseCount = quizSlots - extra;
+  if (baseCount > 0) {
+    slots.push({
+      position: POSITION_BY_POINTS[base] || 'Not Qualified',
+      count: baseCount,
+      pointsPerQuiz: base,
+    });
+  }
+
+  return slots;
+}
+
+function PlacementMedalOrIcon({ position }: { position: QuizPosition }) {
+  if (position === '1st') {
+    return (
+      <svg viewBox="0 0 28 28" className="h-6 w-6 shrink-0" aria-hidden="true">
+        <path d="M8 2h5l1 7h-4z" fill="#b91c1c" />
+        <path d="M20 2h-5l-1 7h4z" fill="#dc2626" />
+        <circle cx="14" cy="17" r="8.5" fill="#f5dc82" stroke="#b45309" strokeWidth="1.4" />
+        <circle cx="14" cy="17" r="6" fill="#d4af37" />
+        <text x="14" y="20" textAnchor="middle" fontSize="8.5" fontWeight="800" fill="#1a1204" fontFamily="monospace">
+          1
+        </text>
+      </svg>
+    );
+  }
+  if (position === '2nd') {
+    return (
+      <svg viewBox="0 0 28 28" className="h-6 w-6 shrink-0" aria-hidden="true">
+        <path d="M8 2h5l1 7h-4z" fill="#1d4ed8" />
+        <path d="M20 2h-5l-1 7h4z" fill="#3b82f6" />
+        <circle cx="14" cy="17" r="8.5" fill="#f1f5f9" stroke="#64748b" strokeWidth="1.4" />
+        <circle cx="14" cy="17" r="6" fill="#cbd5e1" />
+        <text x="14" y="20" textAnchor="middle" fontSize="8.5" fontWeight="800" fill="#0f172a" fontFamily="monospace">
+          2
+        </text>
+      </svg>
+    );
+  }
+  if (position === '3rd') {
+    return (
+      <svg viewBox="0 0 28 28" className="h-6 w-6 shrink-0" aria-hidden="true">
+        <path d="M8 2h5l1 7h-4z" fill="#7c2d12" />
+        <path d="M20 2h-5l-1 7h4z" fill="#b45309" />
+        <circle cx="14" cy="17" r="8.5" fill="#fdba74" stroke="#92400e" strokeWidth="1.4" />
+        <circle cx="14" cy="17" r="6" fill="#d97706" />
+        <text x="14" y="20" textAnchor="middle" fontSize="8.5" fontWeight="800" fill="#1c0d02" fontFamily="monospace">
+          3
+        </text>
+      </svg>
+    );
+  }
+  if (position === '4th') {
+    return (
+      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border border-sky-400/50 bg-sky-500/20 text-sky-300">
+        <Shield className="h-3.5 w-3.5" />
+      </span>
+    );
+  }
+  if (position === '5th') {
+    return (
+      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border border-violet-400/50 bg-violet-500/20 text-violet-300">
+        <Star className="h-3.5 w-3.5" />
+      </span>
+    );
+  }
+  if (position === '6th') {
+    return (
+      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border border-emerald-400/50 bg-emerald-500/20 text-emerald-300">
+        <Compass className="h-3.5 w-3.5" />
+      </span>
+    );
+  }
+  return (
+    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border border-white/15 bg-white/5 text-neutral-400">
+      <MinusCircle className="h-3.5 w-3.5" />
+    </span>
+  );
+}
+
+function getSlotBadgeStyle(position: QuizPosition) {
+  switch (position) {
+    case '1st':
+      return {
+        label: 'Gold Medal (1st)',
+        cls: 'border-[#d4af37]/55 bg-[#d4af37]/15 text-[#f8e6a0]',
+      };
+    case '2nd':
+      return {
+        label: 'Silver Medal (2nd)',
+        cls: 'border-slate-300/45 bg-slate-200/10 text-slate-100',
+      };
+    case '3rd':
+      return {
+        label: 'Bronze Medal (3rd)',
+        cls: 'border-amber-500/45 bg-amber-500/15 text-amber-200',
+      };
+    case '4th':
+      return {
+        label: '4th Finish',
+        cls: 'border-sky-400/45 bg-sky-500/15 text-sky-200',
+      };
+    case '5th':
+      return {
+        label: '5th Finish',
+        cls: 'border-violet-400/45 bg-violet-500/15 text-violet-200',
+      };
+    case '6th':
+      return {
+        label: '6th Finish',
+        cls: 'border-emerald-400/45 bg-emerald-500/15 text-emerald-200',
+      };
+    default:
+      return {
+        label: 'Not Qualified',
+        cls: 'border-white/15 bg-white/5 text-neutral-300',
+      };
+  }
+}
+
+function BareMinimumPlacementBadges({
+  slots,
+}: {
+  slots: BareMinimumSlot[];
+}) {
+  if (slots.length === 0) {
+    return (
+      <span className="font-mono text-xs text-neutral-300">
+        0 points needed
+      </span>
+    );
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-2.5">
+      {slots.map((slot) => {
+        const meta = getSlotBadgeStyle(slot.position);
+        return (
+          <motion.div
+            key={slot.position}
+            initial={{ opacity: 0, scale: 0.94 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+            className={`inline-flex items-center gap-2.5 rounded-xl border px-3 py-2 ${meta.cls}`}
+          >
+            <PlacementMedalOrIcon position={slot.position} />
+            <div className="leading-tight">
+              <div className="flex items-baseline gap-1.5">
+                <span className="font-mono text-base font-extrabold">
+                  {slot.count}×
+                </span>
+                <span className="text-xs font-bold">{meta.label}</span>
+              </div>
+              <span className="block font-mono text-[10px] opacity-80">
+                {slot.pointsPerQuiz} {slot.pointsPerQuiz === 1 ? 'pt' : 'pts'} each ·{' '}
+                {slot.count * slot.pointsPerQuiz} pts
+              </span>
+            </div>
+          </motion.div>
+        );
+      })}
+    </div>
+  );
 }
 
 export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
@@ -247,7 +423,7 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
     [quizzes, standingsYear]
   );
 
-  const awardBonusMap = useMemo(() => {
+  const computeBonusMapForYear = (yearFilter: string) => {
     const map = new Map<string, number>();
     const grant = (player: string) =>
       map.set(player, (map.get(player) || 0) + 3);
@@ -261,8 +437,9 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
       awards.podiumWinners.forEach((w) => grant(w.player));
     };
 
-    if (standingsYear === 'all') {
-      grantAwards(seasonAwards);
+    const normalized = yearFilter.trim();
+    if (normalized === 'all') {
+      grantAwards(computeAwardsForFilter('all'));
       const allYears = Array.from(
         new Set(
           [...bsYears, ...quizzes.map((q) => q.yearBS)]
@@ -274,11 +451,16 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
         grantAwards(computeAwardsForFilter(yr));
       }
     } else {
-      grantAwards(seasonAwards);
+      grantAwards(computeAwardsForFilter(normalized));
     }
 
     return map;
-  }, [quizzes, bsYears, standingsYear, seasonAwards]);
+  };
+
+  const awardBonusMap = useMemo(
+    () => computeBonusMapForYear(standingsYear),
+    [quizzes, bsYears, standingsYear]
+  );
 
   const standings = useMemo(() => {
     const normalizedFilter = standingsYear.trim();
@@ -452,6 +634,16 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
         ? quizzes
         : quizzes.filter((q) => (q.yearBS || '').trim() === normalizedFilter);
 
+    const h2hBonusMap = computeBonusMapForYear(h2hYear);
+    const getPlayerBonusPoints = (playerName: string) => {
+      const target = playerName.trim().toLowerCase();
+      let bonus = 0;
+      for (const [key, val] of h2hBonusMap.entries()) {
+        if (key.trim().toLowerCase() === target) bonus += val;
+      }
+      return bonus;
+    };
+
     const summarize = (playerName: string) => {
       const target = playerName.trim().toLowerCase();
       let first = 0;
@@ -483,6 +675,8 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
         }
       }
 
+      const bonusPoints = getPlayerBonusPoints(playerName);
+      const overallPoints = totalPoints + bonusPoints;
       const podiums = first + second + third;
       const qualRate =
         totalQuizzes > 0 ? Math.round((qualified / totalQuizzes) * 100) : 0;
@@ -504,6 +698,8 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
         notQualified,
         totalQuizzes,
         totalPoints,
+        bonusPoints,
+        overallPoints,
         avgPoints,
         qualRate,
         podiumRate,
@@ -538,14 +734,18 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
           )
         : 0;
 
-    // Catch-up / Pace Benchmark (Pure placement points only, excludes +3 award bonuses)
+    // Catch-up / Pace Benchmark: Overall gap factors in Standings +3 seasonal bonuses,
+    // while Bare Minimum finishes strictly convert the required gap into quiz placements (no bonus medals).
     const maxQuizzes = Math.max(a.totalQuizzes, b.totalQuizzes);
     const hasUnequalQuizzes = a.totalQuizzes !== b.totalQuizzes;
     const chaser = a.totalQuizzes < b.totalQuizzes ? a : b;
     const paceSetter = a.totalQuizzes < b.totalQuizzes ? b : a;
     const remainingQuizzes = paceSetter.totalQuizzes - chaser.totalQuizzes;
-    const pointsToTie = Math.max(0, paceSetter.totalPoints - chaser.totalPoints);
-    const pointsToBeat = paceSetter.totalPoints - chaser.totalPoints + 1;
+    const pointsToTie = Math.max(
+      0,
+      paceSetter.overallPoints - chaser.overallPoints
+    );
+    const pointsToBeat = paceSetter.overallPoints - chaser.overallPoints + 1;
     const maxAchievableInRemaining = remainingQuizzes * 6;
 
     let catchUpStatus:
@@ -559,7 +759,7 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
       catchUpStatus = 'same-player';
     } else if (!hasUnequalQuizzes) {
       catchUpStatus = 'equal-quizzes';
-    } else if (chaser.totalPoints > paceSetter.totalPoints) {
+    } else if (chaser.overallPoints > paceSetter.overallPoints) {
       catchUpStatus = 'chaser-already-ahead';
     } else if (pointsToBeat > maxAchievableInRemaining) {
       catchUpStatus = 'unreachable';
@@ -571,10 +771,10 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
       remainingQuizzes > 0 && pointsToBeat > 0
         ? Math.round((pointsToBeat / remainingQuizzes) * 100) / 100
         : 0;
-    const bareMinimumText =
+    const bareMinimumSlots =
       catchUpStatus === 'reachable'
-        ? formatBareMinimumPlacements(pointsToBeat, remainingQuizzes)
-        : '';
+        ? computeBareMinimumSlots(pointsToBeat, remainingQuizzes)
+        : [];
 
     return {
       a,
@@ -592,11 +792,11 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
         pointsToTie,
         pointsToBeat: Math.max(0, pointsToBeat),
         avgPointsNeeded,
-        bareMinimumText,
-        maxPossibleTotal: chaser.totalPoints + maxAchievableInRemaining,
+        bareMinimumSlots,
+        maxPossibleTotal: chaser.overallPoints + maxAchievableInRemaining,
       },
     };
-  }, [quizzes, h2hYear, h2hPlayerA, h2hPlayerB]);
+  }, [quizzes, bsYears, h2hYear, h2hPlayerA, h2hPlayerB]);
 
   const careerProfile = useMemo(() => {
     if (!selectedCareerPlayer) return null;
@@ -3412,6 +3612,12 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
                         suffix: '/10',
                       },
                       {
+                        label: 'Overall Score (Incl. +3 Season Bonuses)',
+                        valA: h2hData.a.overallPoints,
+                        valB: h2hData.b.overallPoints,
+                        suffix: ' pts',
+                      },
+                      {
                         label: 'Pure Quiz Placement Points',
                         valA: h2hData.a.totalPoints,
                         valB: h2hData.b.totalPoints,
@@ -3600,12 +3806,12 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
                     )}
                   </div>
 
-                  {/* Pace & Catch-Up Benchmark (Pure Placement Points, Excludes +3 Award Bonuses) */}
+                  {/* Pace & Catch-Up Benchmark (Overall Score Gap, Pure Quiz Finishes in Bare Minimum) */}
                   <div className="rounded-2xl border border-[#d4af37]/40 bg-gradient-to-br from-[#16130b] via-[#0c0d12] to-[#0a1424] p-5 sm:p-6">
                     <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-4">
                       <div>
                         <p className="font-mono text-[11px] font-bold tracking-wider text-[#d4af37] uppercase">
-                          Catch-Up Pace Benchmark · Quiz Placement Points Only
+                          Catch-Up Pace Benchmark · Overall Score Gap
                         </p>
                         <h4 className="mt-1 font-display text-xl font-bold text-[#f8e6a0]">
                           Normalized to {h2hData.catchUp.maxQuizzes}{' '}
@@ -3613,7 +3819,7 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
                         </h4>
                       </div>
                       <span className="rounded-lg border border-[#d4af37]/30 bg-black/40 px-3 py-1.5 font-mono text-[11px] text-neutral-300">
-                        1st=6 · 2nd=5 · 3rd=4 · 4th=3 · 5th=2 · 6th=1 · Excludes +3 Awards
+                        Gap includes +3 Season Bonuses · Bare Minimum uses Quiz Finishes Only
                       </span>
                     </div>
 
@@ -3623,14 +3829,16 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
                           {h2hData.a.name}
                         </span>
                         <p className="mt-1 font-mono text-lg font-extrabold text-white">
-                          {h2hData.a.totalPoints} pts{' '}
+                          {h2hData.a.overallPoints} pts{' '}
                           <span className="text-xs font-normal text-neutral-400">
                             across {h2hData.a.totalQuizzes}{' '}
                             {h2hData.a.totalQuizzes === 1 ? 'quiz' : 'quizzes'}
                           </span>
                         </p>
                         <p className="mt-0.5 font-mono text-xs text-[#f5dc82]">
-                          Current Pace: {h2hData.a.avgPoints} pts / quiz
+                          {h2hData.a.bonusPoints > 0
+                            ? `${h2hData.a.totalPoints} quiz pts + ${h2hData.a.bonusPoints} season bonus · Pace: ${h2hData.a.avgPoints} pts/quiz`
+                            : `Pace: ${h2hData.a.avgPoints} pts / quiz`}
                         </p>
                       </div>
 
@@ -3639,14 +3847,16 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
                           {h2hData.b.name}
                         </span>
                         <p className="mt-1 font-mono text-lg font-extrabold text-white">
-                          {h2hData.b.totalPoints} pts{' '}
+                          {h2hData.b.overallPoints} pts{' '}
                           <span className="text-xs font-normal text-neutral-400">
                             across {h2hData.b.totalQuizzes}{' '}
                             {h2hData.b.totalQuizzes === 1 ? 'quiz' : 'quizzes'}
                           </span>
                         </p>
                         <p className="mt-0.5 font-mono text-xs text-sky-300">
-                          Current Pace: {h2hData.b.avgPoints} pts / quiz
+                          {h2hData.b.bonusPoints > 0
+                            ? `${h2hData.b.totalPoints} quiz pts + ${h2hData.b.bonusPoints} season bonus · Pace: ${h2hData.b.avgPoints} pts/quiz`
+                            : `Pace: ${h2hData.b.avgPoints} pts / quiz`}
                         </p>
                       </div>
                     </div>
@@ -3665,11 +3875,11 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
                             Equal Quiz Count ({h2hData.catchUp.maxQuizzes} Quizzes Each)
                           </p>
                           <p className="text-sm text-white">
-                            {h2hData.a.totalPoints === h2hData.b.totalPoints
-                              ? `Dead even at ${h2hData.a.totalPoints} pure quiz points each (${h2hData.a.avgPoints} pts/quiz).`
-                              : h2hData.a.totalPoints > h2hData.b.totalPoints
-                                ? `${h2hData.a.name} leads ${h2hData.b.name} by ${h2hData.a.totalPoints - h2hData.b.totalPoints} pts (${h2hData.a.totalPoints} vs ${h2hData.b.totalPoints}) over ${h2hData.catchUp.maxQuizzes} quizzes.`
-                                : `${h2hData.b.name} leads ${h2hData.a.name} by ${h2hData.b.totalPoints - h2hData.a.totalPoints} pts (${h2hData.b.totalPoints} vs ${h2hData.a.totalPoints}) over ${h2hData.catchUp.maxQuizzes} quizzes.`}
+                            {h2hData.a.overallPoints === h2hData.b.overallPoints
+                              ? `Dead even at ${h2hData.a.overallPoints} overall points each.`
+                              : h2hData.a.overallPoints > h2hData.b.overallPoints
+                                ? `${h2hData.a.name} leads ${h2hData.b.name} by ${h2hData.a.overallPoints - h2hData.b.overallPoints} overall pts (${h2hData.a.overallPoints} vs ${h2hData.b.overallPoints}) over ${h2hData.catchUp.maxQuizzes} quizzes.`
+                                : `${h2hData.b.name} leads ${h2hData.a.name} by ${h2hData.b.overallPoints - h2hData.a.overallPoints} overall pts (${h2hData.b.overallPoints} vs ${h2hData.a.overallPoints}) over ${h2hData.catchUp.maxQuizzes} quizzes.`}
                           </p>
                         </div>
                       )}
@@ -3677,7 +3887,7 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
                       {h2hData.catchUp.status === 'chaser-already-ahead' && (
                         <div className="space-y-1.5">
                           <p className="font-mono text-xs font-bold text-emerald-300 uppercase">
-                            Games in Hand + Points Lead
+                            Games in Hand + Overall Score Lead
                           </p>
                           <p className="text-sm text-white">
                             <span className="font-bold text-[#f8e6a0]">
@@ -3690,11 +3900,12 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
                             by{' '}
                             <span className="font-mono font-bold text-emerald-300">
                               +
-                              {h2hData.catchUp.chaser.totalPoints -
-                                h2hData.catchUp.paceSetter.totalPoints}{' '}
+                              {h2hData.catchUp.chaser.overallPoints -
+                                h2hData.catchUp.paceSetter.overallPoints}{' '}
                               pts
                             </span>{' '}
-                            with{' '}
+                            ({h2hData.catchUp.chaser.overallPoints} vs{' '}
+                            {h2hData.catchUp.paceSetter.overallPoints}) with{' '}
                             <span className="font-mono font-bold text-[#f8e6a0]">
                               {h2hData.catchUp.remainingQuizzes}{' '}
                               {h2hData.catchUp.remainingQuizzes === 1
@@ -3710,7 +3921,8 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
                         <div className="space-y-3">
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <p className="font-mono text-xs font-bold text-[#f5dc82] uppercase">
-                              Target to Beat {h2hData.catchUp.paceSetter.name} within{' '}
+                              Target to Beat {h2hData.catchUp.paceSetter.name}&apos;s{' '}
+                              {h2hData.catchUp.paceSetter.overallPoints} pts within{' '}
                               {h2hData.catchUp.maxQuizzes} Quizzes
                             </p>
                             <span className="rounded-md border border-[#d4af37]/35 bg-[#d4af37]/15 px-2.5 py-0.5 font-mono text-xs font-bold text-[#f8e6a0]">
@@ -3721,24 +3933,26 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
                             </span>
                           </div>
 
-                          <div className="grid gap-3 sm:grid-cols-3">
-                            <div className="rounded-lg border border-white/10 bg-white/5 p-3">
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            <div className="rounded-xl border border-white/10 bg-white/5 p-3.5">
                               <span className="block font-mono text-[10px] text-neutral-400 uppercase">
                                 Points Needed to Defeat
                               </span>
-                              <span className="mt-1 block font-mono text-xl font-extrabold text-white">
+                              <span className="mt-1 block font-mono text-2xl font-extrabold text-white">
                                 {h2hData.catchUp.pointsToBeat} pts
                               </span>
                               <span className="font-mono text-[10px] text-neutral-400">
-                                ({h2hData.catchUp.pointsToTie} pts to tie)
+                                ({h2hData.catchUp.pointsToTie} pts to tie ·{' '}
+                                {h2hData.catchUp.chaser.name} at{' '}
+                                {h2hData.catchUp.chaser.overallPoints} pts)
                               </span>
                             </div>
 
-                            <div className="rounded-lg border border-[#d4af37]/30 bg-[#d4af37]/10 p-3">
+                            <div className="rounded-xl border border-[#d4af37]/30 bg-[#d4af37]/10 p-3.5">
                               <span className="block font-mono text-[10px] text-[#d4af37] uppercase">
                                 Avg Points / Quiz Needed
                               </span>
-                              <span className="mt-1 block font-mono text-xl font-extrabold text-[#f8e6a0]">
+                              <span className="mt-1 block font-mono text-2xl font-extrabold text-[#f8e6a0]">
                                 {h2hData.catchUp.avgPointsNeeded}
                                 <span className="ml-1 text-xs font-normal">
                                   / quiz
@@ -3752,16 +3966,23 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
                               </span>
                             </div>
 
-                            <div className="rounded-lg border border-emerald-400/30 bg-emerald-500/10 p-3">
-                              <span className="block font-mono text-[10px] text-emerald-300 uppercase">
-                                Bare Minimum to Defeat
-                              </span>
-                              <span className="mt-1 block font-display text-base font-bold text-emerald-100">
-                                {h2hData.catchUp.bareMinimumText}
-                              </span>
-                              <span className="font-mono text-[10px] text-emerald-200/75">
-                                For {h2hData.catchUp.chaser.name}
-                              </span>
+                            <div className="rounded-xl border border-emerald-400/30 bg-emerald-500/10 p-4 sm:col-span-2">
+                              <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
+                                <span className="font-mono text-[10px] font-bold text-emerald-300 uppercase">
+                                  Bare Minimum Quiz Finishes to Defeat (No Season Bonus Medals Assumed)
+                                </span>
+                                <span className="font-mono text-[10px] text-emerald-200/80">
+                                  {h2hData.catchUp.chaser.name} ·{' '}
+                                  {h2hData.catchUp.pointsToBeat} pts in{' '}
+                                  {h2hData.catchUp.remainingQuizzes}{' '}
+                                  {h2hData.catchUp.remainingQuizzes === 1
+                                    ? 'quiz'
+                                    : 'quizzes'}
+                                </span>
+                              </div>
+                              <BareMinimumPlacementBadges
+                                slots={h2hData.catchUp.bareMinimumSlots}
+                              />
                             </div>
                           </div>
                         </div>
@@ -3770,7 +3991,7 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
                       {h2hData.catchUp.status === 'unreachable' && (
                         <div className="space-y-2">
                           <p className="font-mono text-xs font-bold text-rose-300 uppercase">
-                            Mathematically Unreachable within {h2hData.catchUp.maxQuizzes} Quizzes
+                            Unreachable via Quiz Placements Alone within {h2hData.catchUp.maxQuizzes} Quizzes
                           </p>
                           <p className="text-sm text-neutral-200">
                             <span className="font-bold text-white">
@@ -3788,18 +4009,19 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
                             {h2hData.catchUp.remainingQuizzes === 1
                               ? 'quiz'
                               : 'quizzes'}{' '}
-                            to overtake{' '}
+                            to beat{' '}
                             <span className="font-bold">
                               {h2hData.catchUp.paceSetter.name}
                             </span>
-                            , which exceeds the maximum 6 pts/quiz (winning 1st in
-                            every remaining quiz reaches{' '}
+                            &apos;s {h2hData.catchUp.paceSetter.overallPoints} overall
+                            pts, which exceeds 6 pts/quiz on placements alone (winning
+                            1st in every remaining quiz reaches{' '}
                             <span className="font-mono font-bold text-white">
                               {h2hData.catchUp.maxPossibleTotal} pts
                             </span>{' '}
                             vs{' '}
                             <span className="font-mono font-bold text-white">
-                              {h2hData.catchUp.paceSetter.totalPoints} pts
+                              {h2hData.catchUp.paceSetter.overallPoints} pts
                             </span>
                             ).
                           </p>
