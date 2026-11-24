@@ -215,6 +215,7 @@ export function AdminPanel(props: AdminPanelProps) {
   const [quizPlayersLines, setQuizPlayersLines] = useState(''); // LINE SEPARATED!
   const [quizTeams, setQuizTeams] = useState('20');
   const [quizRating, setQuizRating] = useState('9');
+  const [quizPlayerRatings, setQuizPlayerRatings] = useState<Record<string, string>>({});
   const [quizNote, setQuizNote] = useState('');
   const [quizPhotoUrl, setQuizPhotoUrl] = useState('');
   const [quizPhotos, setQuizPhotos] = useState<string[]>([]);
@@ -346,16 +347,37 @@ export function AdminPanel(props: AdminPanelProps) {
   const [userError, setUserError] = useState('');
 
   /* ---- HANDLERS ---- */
+  const parsedQuizPlayersList = quizPlayersLines
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+
   const handleQuizSubmit = (e: FormEvent) => {
     e.preventDefault();
-    const parsedPlayers = quizPlayersLines
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean);
+    const parsedPlayers = parsedQuizPlayersList;
 
     if (!quizName.trim() || !quizHost.trim() || parsedPlayers.length === 0) {
       showToast('Quiz Name, Host, and at least 1 line-separated Player are required.');
       return;
+    }
+
+    const overallRating = Math.min(
+      10,
+      Math.max(1, Math.round((Number(quizRating) || 8) * 10) / 10)
+    );
+
+    const cleanedPlayerRatings: Record<string, number> = {};
+    for (const player of parsedPlayers) {
+      const rawVal = quizPlayerRatings[player];
+      const numVal =
+        rawVal !== undefined && rawVal.trim() !== ''
+          ? Number(rawVal)
+          : overallRating;
+      const clamped = Math.min(
+        10,
+        Math.max(1, Math.round((Number.isFinite(numVal) ? numVal : overallRating) * 10) / 10)
+      );
+      cleanedPlayerRatings[player] = clamped;
     }
 
     onSaveQuiz({
@@ -366,7 +388,8 @@ export function AdminPanel(props: AdminPanelProps) {
       host: quizHost.trim(),
       players: parsedPlayers,
       teamCount: Math.max(1, Number(quizTeams) || 1),
-      rating: Math.min(10, Math.max(1, Number(quizRating) || 8)),
+      rating: overallRating,
+      playerRatings: cleanedPlayerRatings,
       extraNote: quizNote.trim(),
       photos: quizPhotos,
       createdAt: editingQuizId
@@ -378,6 +401,8 @@ export function AdminPanel(props: AdminPanelProps) {
     setQuizName('');
     setQuizHost('');
     setQuizPlayersLines('');
+    setQuizPlayerRatings({});
+    setQuizRating('9');
     setQuizNote('');
     setQuizPhotos([]);
   };
@@ -391,6 +416,22 @@ export function AdminPanel(props: AdminPanelProps) {
     setQuizPlayersLines(q.players.join('\n'));
     setQuizTeams(String(q.teamCount));
     setQuizRating(String(q.rating));
+    const loadedRatings: Record<string, string> = {};
+    for (const pl of q.players) {
+      const exact = q.playerRatings?.[pl];
+      if (typeof exact === 'number' && !Number.isNaN(exact)) {
+        loadedRatings[pl] = String(exact);
+      } else if (q.playerRatings) {
+        const lowerKey = pl.trim().toLowerCase();
+        const found = Object.entries(q.playerRatings).find(
+          ([k]) => k.trim().toLowerCase() === lowerKey
+        );
+        loadedRatings[pl] = found ? String(found[1]) : String(q.rating);
+      } else {
+        loadedRatings[pl] = String(q.rating);
+      }
+    }
+    setQuizPlayerRatings(loadedRatings);
     setQuizNote(q.extraNote);
     setQuizPhotos(q.photos);
   };
@@ -658,6 +699,10 @@ export function AdminPanel(props: AdminPanelProps) {
                           setQuizName('');
                           setQuizHost('');
                           setQuizPlayersLines('');
+                          setQuizPlayerRatings({});
+                          setQuizRating('9');
+                          setQuizNote('');
+                          setQuizPhotos([]);
                         }}
                         className="text-xs text-neutral-400 hover:text-white cursor-pointer"
                       >
@@ -725,24 +770,76 @@ export function AdminPanel(props: AdminPanelProps) {
                   </div>
 
                   <div className="grid grid-cols-2 gap-3">
-                    <input
-                      type="number"
-                      min={1}
-                      value={quizTeams}
-                      onChange={(e) => setQuizTeams(e.target.value)}
-                      placeholder="Teams"
-                      className="rounded-xl border border-white/15 bg-[#16140f] px-3 py-2 font-mono text-xs text-white"
-                    />
-                    <input
-                      type="number"
-                      min={1}
-                      max={10}
-                      value={quizRating}
-                      onChange={(e) => setQuizRating(e.target.value)}
-                      placeholder="Rating 1-10"
-                      className="rounded-xl border border-white/15 bg-[#16140f] px-3 py-2 font-mono text-xs text-white"
-                    />
+                    <div>
+                      <label className="mb-1 block text-[11px] font-medium text-neutral-300">
+                        Total Teams
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        value={quizTeams}
+                        onChange={(e) => setQuizTeams(e.target.value)}
+                        placeholder="Teams"
+                        className="w-full rounded-xl border border-white/15 bg-[#16140f] px-3 py-2 font-mono text-xs text-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-[11px] font-medium text-neutral-300">
+                        Overall Quiz Rating (1–10)
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={10}
+                        step="0.1"
+                        value={quizRating}
+                        onChange={(e) => setQuizRating(e.target.value)}
+                        placeholder="Rating 1-10"
+                        className="w-full rounded-xl border border-white/15 bg-[#16140f] px-3 py-2 font-mono text-xs text-white"
+                      />
+                    </div>
                   </div>
+
+                  {parsedQuizPlayersList.length > 0 && (
+                    <div className="rounded-xl border border-[#d4af37]/25 bg-[#15120b] p-3.5">
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <span className="text-[11px] font-semibold text-[#f5dc82]">
+                          Individual Player Ratings (1–10)
+                        </span>
+                        <span className="font-mono text-[10px] text-neutral-400">
+                          Defaults to {quizRating || '9'}/10
+                        </span>
+                      </div>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        {parsedQuizPlayersList.map((player) => (
+                          <div
+                            key={player}
+                            className="flex items-center justify-between gap-2 rounded-lg border border-white/10 bg-black/35 px-2.5 py-1.5"
+                          >
+                            <span className="truncate text-xs font-medium text-neutral-100">
+                              {player}
+                            </span>
+                            <input
+                              type="number"
+                              min={1}
+                              max={10}
+                              step="0.1"
+                              aria-label={`Rating for ${player}`}
+                              value={quizPlayerRatings[player] ?? ''}
+                              placeholder={quizRating || '9'}
+                              onChange={(e) =>
+                                setQuizPlayerRatings((prev) => ({
+                                  ...prev,
+                                  [player]: e.target.value,
+                                }))
+                              }
+                              className="w-16 shrink-0 rounded-md border border-[#d4af37]/35 bg-[#16140f] px-2 py-1 text-right font-mono text-xs font-bold text-[#f8e6a0] focus:border-[#d4af37] focus:outline-none"
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   <textarea
                     rows={2}
@@ -877,25 +974,39 @@ export function AdminPanel(props: AdminPanelProps) {
                         </div>
 
                         <div className="mt-3 flex flex-wrap gap-2">
-                          {q.players.map((pl) => (
-                            <span
-                              key={pl}
-                              className="inline-flex items-center gap-1.5 rounded-lg border border-white/15 bg-black/40 px-2.5 py-1 text-xs text-neutral-200"
-                            >
-                              <span>{pl}</span>
-                              <button
-                                type="button"
-                                title={`Remove ${pl}`}
-                                onClick={() => {
-                                  onRemovePlayerFromQuiz(q.id, pl);
-                                  showToast(`Removed ${pl} from ${q.quizName}`);
-                                }}
-                                className="text-red-300 hover:text-red-100 cursor-pointer"
+                          {q.players.map((pl) => {
+                            const pRate =
+                              q.playerRatings?.[pl] ??
+                              (q.playerRatings
+                                ? Object.entries(q.playerRatings).find(
+                                    ([k]) =>
+                                      k.trim().toLowerCase() === pl.trim().toLowerCase()
+                                  )?.[1]
+                                : undefined) ??
+                              q.rating;
+                            return (
+                              <span
+                                key={pl}
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-white/15 bg-black/40 px-2.5 py-1 text-xs text-neutral-200"
                               >
-                                ×
-                              </button>
-                            </span>
-                          ))}
+                                <span>{pl}</span>
+                                <span className="rounded bg-[#d4af37]/15 px-1.5 py-0.5 font-mono text-[10px] font-bold text-[#f5dc82]">
+                                  {pRate}/10
+                                </span>
+                                <button
+                                  type="button"
+                                  title={`Remove ${pl}`}
+                                  onClick={() => {
+                                    onRemovePlayerFromQuiz(q.id, pl);
+                                    showToast(`Removed ${pl} from ${q.quizName}`);
+                                  }}
+                                  className="text-red-300 hover:text-red-100 cursor-pointer"
+                                >
+                                  ×
+                                </button>
+                              </span>
+                            );
+                          })}
                         </div>
                       </div>
                     ))}
