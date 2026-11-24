@@ -8,6 +8,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Crown,
+  Download,
   FilterX,
   Flame,
   Image as ImageIcon,
@@ -54,9 +55,25 @@ interface LightboxState {
   index: number;
 }
 
+function getPlayerQuizRating(quiz: QuizRecord, playerName: string): number {
+  if (quiz.playerRatings) {
+    const exact = quiz.playerRatings[playerName];
+    if (typeof exact === 'number' && !Number.isNaN(exact)) {
+      return Math.min(10, Math.max(1, Math.round(exact * 10) / 10));
+    }
+    const target = playerName.trim().toLowerCase();
+    for (const [k, v] of Object.entries(quiz.playerRatings)) {
+      if (k.trim().toLowerCase() === target && typeof v === 'number' && !Number.isNaN(v)) {
+        return Math.min(10, Math.max(1, Math.round(v * 10) / 10));
+      }
+    }
+  }
+  return Math.min(10, Math.max(1, Math.round((quiz.rating || 8) * 10) / 10));
+}
+
 export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
   const [subTab, setSubTab] = useState<
-    HofSubTab | 'head-to-head' | 'era-streaks'
+    HofSubTab | 'head-to-head' | 'era-streaks' | 'season-wrapped'
   >('standings');
   const [lightbox, setLightbox] = useState<LightboxState | null>(null);
 
@@ -88,6 +105,12 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
   const [selectedCareerPlayer, setSelectedCareerPlayer] = useState<string | null>(
     null
   );
+
+  // DQR Season Wrapped state
+  const [wrappedYear, setWrappedYear] = useState<string>(
+    () => bsYears[bsYears.length - 1] || 'all'
+  );
+  const [wrappedSlide, setWrappedSlide] = useState<number>(0);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -404,12 +427,14 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
       let qualified = 0;
       let notQualified = 0;
       let totalQuizzes = 0;
+      let ratingSum = 0;
       const list: QuizRecord[] = [];
 
       for (const q of scoped) {
         const played = q.players.some((p) => p.trim().toLowerCase() === target);
         if (!played) continue;
         totalQuizzes += 1;
+        ratingSum += getPlayerQuizRating(q, playerName);
         list.push(q);
         if (q.position === 'Not Qualified') {
           notQualified += 1;
@@ -427,6 +452,8 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
         totalQuizzes > 0 ? Math.round((qualified / totalQuizzes) * 100) : 0;
       const podiumRate =
         totalQuizzes > 0 ? Math.round((podiums / totalQuizzes) * 100) : 0;
+      const avgRating =
+        totalQuizzes > 0 ? Math.round((ratingSum / totalQuizzes) * 10) / 10 : 0;
 
       return {
         name: playerName,
@@ -440,6 +467,7 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
         totalQuizzes,
         qualRate,
         podiumRate,
+        avgRating,
         quizzes: list,
       };
     };
@@ -492,6 +520,7 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
     let sixth = 0;
     let notQualified = 0;
     let qualified = 0;
+    let ratingSum = 0;
 
     const yearSet = new Set<string>();
     const partnerMap = new Map<
@@ -504,6 +533,7 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
     >();
 
     for (const q of playedQuizzes) {
+      ratingSum += getPlayerQuizRating(q, selectedCareerPlayer);
       if (q.yearBS?.trim()) yearSet.add(q.yearBS.trim());
       const isQual = q.position !== 'Not Qualified';
       const isPodium =
@@ -576,6 +606,8 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
       totalQuizzes > 0 ? Math.round((qualified / totalQuizzes) * 100) : 0;
     const podiumRate =
       totalQuizzes > 0 ? Math.round((podiums / totalQuizzes) * 100) : 0;
+    const avgRating =
+      totalQuizzes > 0 ? Math.round((ratingSum / totalQuizzes) * 10) / 10 : 0;
     const activeYears = Array.from(yearSet).sort();
 
     const bestPartner =
@@ -607,6 +639,7 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
       podiums,
       qualRate,
       podiumRate,
+      avgRating,
       activeYears,
       bestPartner,
       topHost,
@@ -783,6 +816,422 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
     };
   }, [quizzes, bsYears, uniquePlayers]);
 
+  const wrappedData = useMemo(() => {
+    const normalized = wrappedYear.trim();
+    const scoped = (
+      normalized === 'all'
+        ? quizzes
+        : quizzes.filter((q) => (q.yearBS || '').trim() === normalized)
+    )
+      .slice()
+      .sort(
+        (a, b) =>
+          (a.yearBS || '').trim().localeCompare((b.yearBS || '').trim()) ||
+          (a.createdAt || 0) - (b.createdAt || 0)
+      );
+
+    const totalQuizzes = scoped.length;
+    const first = scoped.filter((q) => q.position === '1st').length;
+    const second = scoped.filter((q) => q.position === '2nd').length;
+    const third = scoped.filter((q) => q.position === '3rd').length;
+    const podiums = first + second + third;
+    const qualified = scoped.filter((q) => q.position !== 'Not Qualified').length;
+    const qualRate = totalQuizzes > 0 ? Math.round((qualified / totalQuizzes) * 100) : 0;
+    const podiumRate = totalQuizzes > 0 ? Math.round((podiums / totalQuizzes) * 100) : 0;
+    const avgQuizRating =
+      totalQuizzes > 0
+        ? Math.round(
+            (scoped.reduce((sum, q) => sum + (q.rating || 0), 0) / totalQuizzes) * 10
+          ) / 10
+        : 0;
+
+    const standingsList = computeStandings(scoped, 'all', 'points');
+    const pointsLeader = standingsList[0] || null;
+    const goldSovereign =
+      standingsList
+        .filter((r) => r.first > 0)
+        .sort((a, b) => b.first - a.first || b.points - a.points)[0] || null;
+    const clutchQualifier =
+      standingsList
+        .filter((r) => r.qualified > 0)
+        .sort((a, b) => b.qualified - a.qualified || b.points - a.points)[0] || null;
+
+    // Top Rated Player (using per-player individual quiz ratings)
+    const ratingAccum = new Map<
+      string,
+      { player: string; sum: number; count: number; podiums: number }
+    >();
+    const rosterSet = new Set<string>();
+    const hostMap = new Map<
+      string,
+      { host: string; total: number; podiums: number; wins: number }
+    >();
+    const duoMap = new Map<
+      string,
+      {
+        playerA: string;
+        playerB: string;
+        shared: number;
+        wins: number;
+        podiums: number;
+        qualified: number;
+        points: number;
+      }
+    >();
+
+    let bestQualStreak = 0;
+    let runQual = 0;
+    let bestPodiumStreak = 0;
+    let runPod = 0;
+
+    for (const q of scoped) {
+      const isQual = q.position !== 'Not Qualified';
+      const isPod =
+        q.position === '1st' || q.position === '2nd' || q.position === '3rd';
+      const isWin = q.position === '1st';
+      const pts = POSITION_POINTS[q.position] ?? 0;
+
+      if (isQual) {
+        runQual += 1;
+        if (runQual > bestQualStreak) bestQualStreak = runQual;
+      } else {
+        runQual = 0;
+      }
+      if (isPod) {
+        runPod += 1;
+        if (runPod > bestPodiumStreak) bestPodiumStreak = runPod;
+      } else {
+        runPod = 0;
+      }
+
+      if (q.host?.trim()) {
+        const hk = q.host.trim();
+        const curH = hostMap.get(hk) || { host: hk, total: 0, podiums: 0, wins: 0 };
+        curH.total += 1;
+        if (isPod) curH.podiums += 1;
+        if (isWin) curH.wins += 1;
+        hostMap.set(hk, curH);
+      }
+
+      const uniqueClean = Array.from(
+        new Set(q.players.map((p) => p.trim()).filter(Boolean))
+      );
+      for (const pl of uniqueClean) {
+        rosterSet.add(pl);
+        const key = pl.toLowerCase();
+        const cur = ratingAccum.get(key) || {
+          player: pl,
+          sum: 0,
+          count: 0,
+          podiums: 0,
+        };
+        cur.sum += getPlayerQuizRating(q, pl);
+        cur.count += 1;
+        if (isPod) cur.podiums += 1;
+        ratingAccum.set(key, cur);
+      }
+
+      for (let i = 0; i < uniqueClean.length; i++) {
+        for (let j = i + 1; j < uniqueClean.length; j++) {
+          const [playerA, playerB] = [uniqueClean[i], uniqueClean[j]].sort((a, b) =>
+            a.localeCompare(b)
+          );
+          const dKey = `${playerA.toLowerCase()}__${playerB.toLowerCase()}`;
+          const curD = duoMap.get(dKey) || {
+            playerA,
+            playerB,
+            shared: 0,
+            wins: 0,
+            podiums: 0,
+            qualified: 0,
+            points: 0,
+          };
+          curD.shared += 1;
+          if (isWin) curD.wins += 1;
+          if (isPod) curD.podiums += 1;
+          if (isQual) curD.qualified += 1;
+          curD.points += pts;
+          duoMap.set(dKey, curD);
+        }
+      }
+    }
+
+    const topRatedPlayers = Array.from(ratingAccum.values())
+      .map((item) => ({
+        player: item.player,
+        avgRating: Math.round((item.sum / item.count) * 10) / 10,
+        quizzes: item.count,
+        podiums: item.podiums,
+      }))
+      .sort(
+        (a, b) =>
+          b.avgRating - a.avgRating ||
+          b.quizzes - a.quizzes ||
+          b.podiums - a.podiums
+      );
+
+    const topDuos = Array.from(duoMap.values())
+      .map((d) => ({
+        ...d,
+        qualRate: d.shared > 0 ? Math.round((d.qualified / d.shared) * 100) : 0,
+      }))
+      .sort(
+        (a, b) =>
+          b.podiums - a.podiums ||
+          b.wins - a.wins ||
+          b.points - a.points ||
+          b.shared - a.shared
+      );
+
+    const topHost =
+      Array.from(hostMap.values()).sort(
+        (a, b) => b.wins - a.wins || b.podiums - a.podiums || b.total - a.total
+      )[0] || null;
+
+    const signatureQuiz =
+      scoped
+        .slice()
+        .sort(
+          (a, b) =>
+            (POSITION_POINTS[b.position] ?? 0) - (POSITION_POINTS[a.position] ?? 0) ||
+            (b.rating || 0) - (a.rating || 0) ||
+            (b.teamCount || 0) - (a.teamCount || 0)
+        )[0] || null;
+
+    return {
+      label: normalized === 'all' ? 'All-Time Chronicle' : `${normalized} B.S.`,
+      totalQuizzes,
+      first,
+      second,
+      third,
+      podiums,
+      qualified,
+      qualRate,
+      podiumRate,
+      avgQuizRating,
+      roster: Array.from(rosterSet).sort(),
+      pointsLeader,
+      goldSovereign,
+      clutchQualifier,
+      topRatedPlayer: topRatedPlayers[0] || null,
+      topRatedPlayers: topRatedPlayers.slice(0, 4),
+      topDuo: topDuos[0] || null,
+      runnerUpDuo: topDuos[1] || null,
+      bestQualStreak,
+      bestPodiumStreak,
+      topHost,
+      signatureQuiz,
+    };
+  }, [quizzes, wrappedYear]);
+
+  const downloadWrappedPoster = () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1200;
+    canvas.height = 1500;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    // Background Gradient
+    const bgGrad = ctx.createLinearGradient(0, 0, 1200, 1500);
+    bgGrad.addColorStop(0, '#071326');
+    bgGrad.addColorStop(0.55, '#09090d');
+    bgGrad.addColorStop(1, '#120e07');
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0, 0, 1200, 1500);
+
+    // Subtle radial glow
+    const glow = ctx.createRadialGradient(600, 260, 40, 600, 260, 560);
+    glow.addColorStop(0, 'rgba(212, 175, 55, 0.18)');
+    glow.addColorStop(1, 'rgba(212, 175, 55, 0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, 1200, 1500);
+
+    // Borders
+    ctx.strokeStyle = '#d4af37';
+    ctx.lineWidth = 4;
+    ctx.strokeRect(36, 36, 1128, 1428);
+    ctx.strokeStyle = 'rgba(212, 175, 55, 0.35)';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(52, 52, 1096, 1396);
+
+    // Header
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#d4af37';
+    ctx.font = '700 22px monospace';
+    ctx.fillText('DISTRICT QUIZ ROYALE · OFFICIAL RECAP', 600, 125);
+
+    ctx.fillStyle = '#f8e6a0';
+    ctx.font = '700 66px Georgia, serif';
+    ctx.fillText('DQR Season Wrapped', 600, 200);
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '700 34px monospace';
+    ctx.fillText(wrappedData.label.toUpperCase(), 600, 256);
+
+    // Helper for rounded box
+    const drawCard = (
+      x: number,
+      y: number,
+      w: number,
+      h: number,
+      border = 'rgba(212,175,55,0.4)',
+      fill = 'rgba(255,255,255,0.04)'
+    ) => {
+      ctx.save();
+      ctx.beginPath();
+      ctx.roundRect(x, y, w, h, 20);
+      ctx.fillStyle = fill;
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = border;
+      ctx.stroke();
+      ctx.restore();
+    };
+
+    // Row 1: 4 Overview Stat Tiles
+    const tiles = [
+      { label: 'QUIZZES', val: String(wrappedData.totalQuizzes), color: '#ffffff' },
+      { label: 'QUAL RATE', val: `${wrappedData.qualRate}%`, color: '#6ee7b7' },
+      { label: 'PODIUMS', val: String(wrappedData.podiums), color: '#f8e6a0' },
+      { label: 'GOLD WINS', val: String(wrappedData.first), color: '#fde047' },
+    ];
+    tiles.forEach((t, i) => {
+      const tx = 88 + i * 262;
+      drawCard(tx, 315, 240, 145);
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#9ca3af';
+      ctx.font = '700 18px monospace';
+      ctx.fillText(t.label, tx + 120, 362);
+      ctx.fillStyle = t.color;
+      ctx.font = '700 54px monospace';
+      ctx.fillText(t.val, tx + 120, 428);
+    });
+
+    // Row 2: Sovereigns & Highest Rated
+    drawCard(88, 495, 498, 220, 'rgba(212,175,55,0.55)', 'rgba(212,175,55,0.08)');
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#d4af37';
+    ctx.font = '700 18px monospace';
+    ctx.fillText('SEASON STANDINGS LEADER', 120, 545);
+    ctx.fillStyle = '#f8e6a0';
+    ctx.font = '700 36px Georgia, serif';
+    ctx.fillText(wrappedData.pointsLeader?.player || '—', 120, 602, 434);
+    ctx.fillStyle = '#e5e7eb';
+    ctx.font = '600 22px monospace';
+    ctx.fillText(
+      wrappedData.pointsLeader
+        ? `${wrappedData.pointsLeader.points} pts · ${wrappedData.pointsLeader.first} Gold · ${wrappedData.pointsLeader.qualified} Qual`
+        : 'No standings recorded',
+      120,
+      655,
+      434
+    );
+
+    drawCard(614, 495, 498, 220, 'rgba(56,189,248,0.5)', 'rgba(56,189,248,0.07)');
+    ctx.fillStyle = '#7dd3fc';
+    ctx.font = '700 18px monospace';
+    ctx.fillText('HIGHEST RATED PLAYER', 646, 545);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '700 36px Georgia, serif';
+    ctx.fillText(wrappedData.topRatedPlayer?.player || '—', 646, 602, 434);
+    ctx.fillStyle = '#bae6fd';
+    ctx.font = '600 22px monospace';
+    ctx.fillText(
+      wrappedData.topRatedPlayer
+        ? `${wrappedData.topRatedPlayer.avgRating}/10 Avg · ${wrappedData.topRatedPlayer.quizzes} Quizzes`
+        : 'No ratings recorded',
+      646,
+      655,
+      434
+    );
+
+    // Row 3: Unstoppable Duo
+    drawCard(88, 750, 1024, 210, 'rgba(52,211,153,0.45)', 'rgba(16,185,129,0.07)');
+    ctx.fillStyle = '#6ee7b7';
+    ctx.font = '700 19px monospace';
+    ctx.fillText('UNSTOPPABLE DUO · SQUAD CHEMISTRY', 122, 800);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '700 38px Georgia, serif';
+    ctx.fillText(
+      wrappedData.topDuo
+        ? `${wrappedData.topDuo.playerA}  &  ${wrappedData.topDuo.playerB}`
+        : 'No Duo Records',
+      122,
+      860,
+      956
+    );
+    ctx.fillStyle = '#d1fae5';
+    ctx.font = '600 22px monospace';
+    ctx.fillText(
+      wrappedData.topDuo
+        ? `${wrappedData.topDuo.podiums} Top-3 Podiums · ${wrappedData.topDuo.wins} Gold Wins · ${wrappedData.topDuo.qualRate}% Qual Rate (${wrappedData.topDuo.shared} Shared)`
+        : 'Record multi-player quizzes to unlock duo insights',
+      122,
+      916,
+      956
+    );
+
+    // Row 4: Streaks & Signature Moment
+    drawCard(88, 995, 498, 235);
+    ctx.fillStyle = '#f5dc82';
+    ctx.font = '700 18px monospace';
+    ctx.fillText('MOMENTUM & STREAKS', 120, 1045);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '700 28px monospace';
+    ctx.fillText(`Best Qual Streak: ${wrappedData.bestQualStreak} Quizzes`, 120, 1105);
+    ctx.fillStyle = '#f8e6a0';
+    ctx.fillText(`Best Podium Run: ${wrappedData.bestPodiumStreak} Top-3`, 120, 1152);
+    ctx.fillStyle = '#cbd5e1';
+    ctx.font = '600 20px sans-serif';
+    ctx.fillText(
+      wrappedData.topHost
+        ? `Top Host: ${wrappedData.topHost.host} (${wrappedData.topHost.total})`
+        : 'Top Host: —',
+      120,
+      1198,
+      434
+    );
+
+    drawCard(614, 995, 498, 235);
+    ctx.fillStyle = '#f5dc82';
+    ctx.font = '700 18px monospace';
+    ctx.fillText('SIGNATURE MOMENT', 646, 1045);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '700 30px Georgia, serif';
+    ctx.fillText(wrappedData.signatureQuiz?.quizName || '—', 646, 1102, 434);
+    ctx.fillStyle = '#f8e6a0';
+    ctx.font = '600 21px monospace';
+    ctx.fillText(
+      wrappedData.signatureQuiz
+        ? `${wrappedData.signatureQuiz.position} Place · ${wrappedData.signatureQuiz.rating}/10 · ${wrappedData.signatureQuiz.teamCount} Teams`
+        : 'No quiz highlight',
+      646,
+      1152,
+      434
+    );
+    ctx.fillStyle = '#cbd5e1';
+    ctx.font = '600 19px sans-serif';
+    ctx.fillText(wrappedData.signatureQuiz?.host || '', 646, 1198, 434);
+
+    // Footer Seal
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#d4af37';
+    ctx.font = '700 22px monospace';
+    ctx.fillText(
+      `GOLD ${wrappedData.first}  ·  SILVER ${wrappedData.second}  ·  BRONZE ${wrappedData.third}  ·  AVG QUIZ RATING ${wrappedData.avgQuizRating}/10`,
+      600,
+      1315
+    );
+    ctx.fillStyle = 'rgba(245, 242, 235, 0.55)';
+    ctx.font = '500 18px Georgia, serif';
+    ctx.fillText('District Quiz Royale Permanent Academic Archive', 600, 1378);
+
+    const link = document.createElement('a');
+    link.download = `DQR-Season-Wrapped-${wrappedYear === 'all' ? 'All-Time' : wrappedYear}.png`;
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+  };
+
   const hasAnyFilter = Boolean(
     filterYear || filterPosition || filterHost || filterPlayer
   );
@@ -955,6 +1404,7 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
                   { id: 'synergy', label: 'Squad Synergy' },
                   { id: 'head-to-head', label: 'Head-to-Head' },
                   { id: 'era-streaks', label: 'Era & Streaks' },
+                  { id: 'season-wrapped', label: 'Season Wrapped' },
                 ] as const
               ).map((tab) => {
                 const active = subTab === tab.id;
@@ -2358,7 +2808,7 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
                       >
                         {h2hData.a.name}
                       </button>
-                      <div className="mt-4 grid grid-cols-3 gap-2.5 text-center font-mono text-xs">
+                      <div className="mt-4 grid grid-cols-2 gap-2.5 text-center font-mono text-xs sm:grid-cols-4">
                         <div className="rounded-xl border border-[#d4af37]/25 bg-black/35 py-2.5">
                           <span className="block text-[10px] text-neutral-400">
                             Quizzes
@@ -2381,6 +2831,14 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
                           </span>
                           <span className="text-base font-bold text-emerald-300">
                             {h2hData.a.qualified}
+                          </span>
+                        </div>
+                        <div className="rounded-xl border border-[#d4af37]/25 bg-black/35 py-2.5">
+                          <span className="block text-[10px] text-neutral-400">
+                            Avg Rating
+                          </span>
+                          <span className="text-base font-bold text-[#f5dc82]">
+                            {h2hData.a.avgRating}/10
                           </span>
                         </div>
                       </div>
@@ -2409,7 +2867,7 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
                       >
                         {h2hData.b.name}
                       </button>
-                      <div className="mt-4 grid grid-cols-3 gap-2.5 text-center font-mono text-xs">
+                      <div className="mt-4 grid grid-cols-2 gap-2.5 text-center font-mono text-xs sm:grid-cols-4">
                         <div className="rounded-xl border border-sky-400/20 bg-black/35 py-2.5">
                           <span className="block text-[10px] text-neutral-400">
                             Quizzes
@@ -2434,6 +2892,14 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
                             {h2hData.b.qualified}
                           </span>
                         </div>
+                        <div className="rounded-xl border border-sky-400/20 bg-black/35 py-2.5">
+                          <span className="block text-[10px] text-neutral-400">
+                            Avg Rating
+                          </span>
+                          <span className="text-base font-bold text-sky-200">
+                            {h2hData.b.avgRating}/10
+                          </span>
+                        </div>
                       </div>
                     </motion.div>
                   </div>
@@ -2444,6 +2910,12 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
                       Stat-by-Stat Comparison
                     </h4>
                     {[
+                      {
+                        label: 'Average Player Rating (/10)',
+                        valA: h2hData.a.avgRating,
+                        valB: h2hData.b.avgRating,
+                        suffix: '/10',
+                      },
                       {
                         label: '1st Place Wins (Gold)',
                         valA: h2hData.a.first,
@@ -2938,6 +3410,724 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
               )}
             </motion.div>
           )}
+
+          {/* ================= 7. DQR SEASON WRAPPED SUB-TAB ================= */}
+          {subTab === 'season-wrapped' && (
+            <motion.div
+              key="season-wrapped"
+              initial={{ opacity: 0, y: 18 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -12 }}
+              transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+              className="rounded-3xl border border-[#d4af37]/45 bg-gradient-to-b from-[#0a1628] via-[#09090d] to-[#0b0a08] p-6 text-[#f5f2eb] shadow-[0_24px_80px_rgba(0,0,0,0.7)] sm:p-10"
+            >
+              {/* Header + Season Picker */}
+              <div className="flex flex-col justify-between gap-4 border-b border-[#d4af37]/20 pb-6 lg:flex-row lg:items-end">
+                <div>
+                  <p className="font-mono text-xs tracking-[0.22em] text-[#d4af37] uppercase">
+                    Interactive Retrospective · Bikram Sambat Recap
+                  </p>
+                  <h2 className="mt-1.5 font-display text-2xl font-bold text-[#f8e6a0] sm:text-4xl">
+                    DQR Season Wrapped
+                  </h2>
+                  <p className="mt-1.5 text-xs text-neutral-400">
+                    Swipe or step through the defining numbers, sovereigns,
+                    highest-rated players, chemistry duos, and signature victory
+                    for any B.S. season.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setWrappedYear('all');
+                      setWrappedSlide(0);
+                    }}
+                    className={`rounded-xl border px-3 py-1.5 font-mono text-xs font-bold transition-colors cursor-pointer ${
+                      wrappedYear === 'all'
+                        ? 'border-[#f5dc82] bg-[#d4af37] text-[#08080a]'
+                        : 'border-[#d4af37]/30 bg-[#12110d] text-[#f5dc82] hover:border-[#d4af37]'
+                    }`}
+                  >
+                    All-Time
+                  </button>
+                  {bsYears.map((yr) => (
+                    <button
+                      key={yr}
+                      type="button"
+                      onClick={() => {
+                        setWrappedYear(yr);
+                        setWrappedSlide(0);
+                      }}
+                      className={`rounded-xl border px-3 py-1.5 font-mono text-xs font-bold transition-colors cursor-pointer ${
+                        wrappedYear === yr
+                          ? 'border-[#f5dc82] bg-[#d4af37] text-[#08080a]'
+                          : 'border-[#d4af37]/30 bg-[#12110d] text-[#f5dc82] hover:border-[#d4af37]'
+                      }`}
+                    >
+                      {yr} B.S.
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {wrappedData.totalQuizzes === 0 ? (
+                <div className="mt-8 rounded-2xl border border-[#d4af37]/25 bg-[#100f0c] p-12 text-center">
+                  <Sparkles className="mx-auto h-10 w-10 text-[#d4af37]/60" />
+                  <h3 className="mt-3 font-display text-xl font-bold text-[#f8e6a0]">
+                    No Quizzes Recorded for {wrappedData.label}
+                  </h3>
+                  <p className="mt-1 text-xs text-neutral-400">
+                    Choose another Bikram Sambat year above or add quiz records
+                    in the Admin Studio.
+                  </p>
+                </div>
+              ) : (
+                <div className="mt-7 space-y-6">
+                  {/* Story Progress Bars + Controls */}
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="grid flex-1 grid-cols-5 gap-2">
+                      {[
+                        '01 Overview',
+                        '02 Sovereigns',
+                        '03 Duo',
+                        '04 Streaks',
+                        '05 Poster',
+                      ].map((label, idx) => {
+                        const isActive = wrappedSlide === idx;
+                        const isDone = idx < wrappedSlide;
+                        return (
+                          <button
+                            key={label}
+                            type="button"
+                            onClick={() => setWrappedSlide(idx)}
+                            className="group text-left cursor-pointer"
+                          >
+                            <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/15">
+                              <div
+                                className={`h-full transition-all duration-300 ${
+                                  isActive
+                                    ? 'w-full bg-gradient-to-r from-[#d4af37] to-[#fff0a8]'
+                                    : isDone
+                                      ? 'w-full bg-[#d4af37]/65'
+                                      : 'w-0'
+                                }`}
+                              />
+                            </div>
+                            <span
+                              className={`mt-1.5 hidden font-mono text-[10px] font-bold sm:block ${
+                                isActive
+                                  ? 'text-[#f8e6a0]'
+                                  : 'text-neutral-400 group-hover:text-neutral-200'
+                              }`}
+                            >
+                              {label}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <div className="flex items-center gap-2 self-end sm:self-auto">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setWrappedSlide((s) => (s - 1 + 5) % 5)
+                        }
+                        aria-label="Previous wrapped slide"
+                        className="inline-flex items-center gap-1 rounded-xl border border-[#d4af37]/35 bg-[#12110d] px-3 py-2 text-xs font-semibold text-[#f5dc82] hover:border-[#d4af37] cursor-pointer"
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                        <span>Prev</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setWrappedSlide((s) => (s + 1) % 5)}
+                        aria-label="Next wrapped slide"
+                        className="inline-flex items-center gap-1 rounded-xl bg-[#d4af37] px-3.5 py-2 text-xs font-bold text-[#08080a] hover:bg-[#e7c44d] cursor-pointer"
+                      >
+                        <span>Next</span>
+                        <ChevronRight className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Interactive Slide Stage */}
+                  <div className="relative overflow-hidden rounded-3xl border border-[#d4af37]/35 bg-[#090d16] p-6 shadow-inner sm:p-9">
+                    <AnimatePresence mode="wait">
+                      {/* SLIDE 0: OVERVIEW */}
+                      {wrappedSlide === 0 && (
+                        <motion.div
+                          key={`wrap-0-${wrappedYear}`}
+                          initial={{ opacity: 0, x: 24 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          exit={{ opacity: 0, x: -24 }}
+                          transition={{ duration: 0.32, ease: [0.16, 1, 0.3, 1] }}
+                          className="space-y-6"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                              <span className="font-mono text-[11px] font-bold tracking-[0.2em] text-[#d4af37] uppercase">
+                                Chapter 01 · Season Footprint
+                              </span>
+                              <h3 className="mt-1 font-display text-3xl font-bold text-white sm:text-4xl">
+                                {wrappedData.label} in Numbers
+                              </h3>
+                            </div>
+                            <div className="rounded-2xl border border-[#d4af37]/40 bg-[#18140b] px-4 py-2 text-right">
+                              <span className="block font-mono text-[10px] text-neutral-400 uppercase">
+                                Avg Quiz Rating
+                              </span>
+                              <span className="font-mono text-xl font-extrabold text-[#f8e6a0]">
+                                {wrappedData.avgQuizRating} / 10
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+                            <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
+                              <span className="font-mono text-[11px] text-neutral-400 uppercase">
+                                Competitions Entered
+                              </span>
+                              <p className="mt-2 font-mono text-4xl font-extrabold text-white">
+                                {wrappedData.totalQuizzes}
+                              </p>
+                              <p className="mt-1 text-xs text-neutral-400">
+                                {wrappedData.roster.length} unique players fielded
+                              </p>
+                            </div>
+                            <div className="rounded-2xl border border-emerald-400/30 bg-emerald-500/10 p-5">
+                              <span className="font-mono text-[11px] text-emerald-300 uppercase">
+                                Qualification Rate
+                              </span>
+                              <p className="mt-2 font-mono text-4xl font-extrabold text-emerald-200">
+                                {wrappedData.qualRate}%
+                              </p>
+                              <p className="mt-1 text-xs text-emerald-200/80">
+                                {wrappedData.qualified} finals reached
+                              </p>
+                            </div>
+                            <div className="rounded-2xl border border-[#d4af37]/35 bg-[#d4af37]/10 p-5">
+                              <span className="font-mono text-[11px] text-[#f5dc82] uppercase">
+                                Top-3 Podiums
+                              </span>
+                              <p className="mt-2 font-mono text-4xl font-extrabold text-[#f8e6a0]">
+                                {wrappedData.podiums}
+                              </p>
+                              <p className="mt-1 text-xs text-[#f5dc82]/80">
+                                {wrappedData.podiumRate}% podium finish rate
+                              </p>
+                            </div>
+                            <div className="rounded-2xl border border-amber-300/35 bg-gradient-to-br from-[#231b0b] to-[#110e09] p-5">
+                              <span className="font-mono text-[11px] text-amber-200 uppercase">
+                                Medal Split
+                              </span>
+                              <div className="mt-3 flex items-baseline gap-3 font-mono text-lg font-extrabold">
+                                <span className="text-[#fde047]">
+                                  {wrappedData.first}G
+                                </span>
+                                <span className="text-slate-200">
+                                  {wrappedData.second}S
+                                </span>
+                                <span className="text-[#f5c08D]">
+                                  {wrappedData.third}B
+                                </span>
+                              </div>
+                              <p className="mt-2 text-xs text-neutral-400">
+                                Gold · Silver · Bronze
+                              </p>
+                            </div>
+                          </div>
+                        </motion.div>
+                      )}
+
+                      {/* SLIDE 1: SOVEREIGNS & TOP RATED */}
+                      {wrappedSlide === 1 && (
+                        <motion.div
+                          key={`wrap-1-${wrappedYear}`}
+                          initial={{ opacity: 0, x: 24 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          exit={{ opacity: 0, x: -24 }}
+                          transition={{ duration: 0.32, ease: [0.16, 1, 0.3, 1] }}
+                          className="space-y-6"
+                        >
+                          <div>
+                            <span className="font-mono text-[11px] font-bold tracking-[0.2em] text-[#d4af37] uppercase">
+                              Chapter 02 · Season Sovereigns &amp; Ratings
+                            </span>
+                            <h3 className="mt-1 font-display text-3xl font-bold text-white">
+                              Who Owned {wrappedData.label}
+                            </h3>
+                          </div>
+
+                          <div className="grid gap-4 sm:grid-cols-2">
+                            <button
+                              type="button"
+                              disabled={!wrappedData.pointsLeader}
+                              onClick={() =>
+                                wrappedData.pointsLeader &&
+                                setSelectedCareerPlayer(
+                                  wrappedData.pointsLeader.player
+                                )
+                              }
+                              className="rounded-2xl border border-[#d4af37]/50 bg-gradient-to-br from-[#1f190b] to-[#0d0c09] p-5 text-left transition-colors hover:border-[#f8e6a0] cursor-pointer"
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="font-mono text-[11px] font-bold text-[#d4af37] uppercase">
+                                  Standings Sovereign
+                                </span>
+                                <Crown className="h-5 w-5 text-[#f5dc82]" />
+                              </div>
+                              <p className="mt-2 font-display text-2xl font-bold text-[#f8e6a0]">
+                                {wrappedData.pointsLeader?.player || '—'}
+                              </p>
+                              <p className="mt-1 font-mono text-xs text-neutral-300">
+                                {wrappedData.pointsLeader
+                                  ? `${wrappedData.pointsLeader.points} pts · ${wrappedData.pointsLeader.totalQuizzes} quizzes · ${wrappedData.pointsLeader.first} Gold`
+                                  : 'No data'}
+                              </p>
+                            </button>
+
+                            <button
+                              type="button"
+                              disabled={!wrappedData.topRatedPlayer}
+                              onClick={() =>
+                                wrappedData.topRatedPlayer &&
+                                setSelectedCareerPlayer(
+                                  wrappedData.topRatedPlayer.player
+                                )
+                              }
+                              className="rounded-2xl border border-sky-400/45 bg-gradient-to-br from-[#0e1e33] to-[#080d14] p-5 text-left transition-colors hover:border-sky-300 cursor-pointer"
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="font-mono text-[11px] font-bold text-sky-300 uppercase">
+                                  Highest Avg Player Rating
+                                </span>
+                                <Star className="h-5 w-5 text-sky-300" />
+                              </div>
+                              <p className="mt-2 font-display text-2xl font-bold text-white">
+                                {wrappedData.topRatedPlayer?.player || '—'}
+                              </p>
+                              <p className="mt-1 font-mono text-xs text-sky-200">
+                                {wrappedData.topRatedPlayer
+                                  ? `${wrappedData.topRatedPlayer.avgRating} / 10 avg across ${wrappedData.topRatedPlayer.quizzes} quizzes`
+                                  : 'No ratings'}
+                              </p>
+                            </button>
+
+                            <button
+                              type="button"
+                              disabled={!wrappedData.goldSovereign}
+                              onClick={() =>
+                                wrappedData.goldSovereign &&
+                                setSelectedCareerPlayer(
+                                  wrappedData.goldSovereign.player
+                                )
+                              }
+                              className="rounded-2xl border border-amber-300/35 bg-[#15120c] p-5 text-left transition-colors hover:border-amber-200 cursor-pointer"
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="font-mono text-[11px] font-bold text-amber-300 uppercase">
+                                  Most Gold Wins
+                                </span>
+                                <Trophy className="h-5 w-5 text-amber-300" />
+                              </div>
+                              <p className="mt-2 font-display text-xl font-bold text-white">
+                                {wrappedData.goldSovereign?.player || 'None Yet'}
+                              </p>
+                              <p className="mt-1 font-mono text-xs text-neutral-300">
+                                {wrappedData.goldSovereign
+                                  ? `${wrappedData.goldSovereign.first} First Place Finishes`
+                                  : 'No 1st place recorded'}
+                              </p>
+                            </button>
+
+                            <button
+                              type="button"
+                              disabled={!wrappedData.clutchQualifier}
+                              onClick={() =>
+                                wrappedData.clutchQualifier &&
+                                setSelectedCareerPlayer(
+                                  wrappedData.clutchQualifier.player
+                                )
+                              }
+                              className="rounded-2xl border border-emerald-400/35 bg-[#0b1814] p-5 text-left transition-colors hover:border-emerald-300 cursor-pointer"
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="font-mono text-[11px] font-bold text-emerald-300 uppercase">
+                                  Clutch Qualifier
+                                </span>
+                                <Award className="h-5 w-5 text-emerald-300" />
+                              </div>
+                              <p className="mt-2 font-display text-xl font-bold text-white">
+                                {wrappedData.clutchQualifier?.player || 'None Yet'}
+                              </p>
+                              <p className="mt-1 font-mono text-xs text-emerald-200/85">
+                                {wrappedData.clutchQualifier
+                                  ? `${wrappedData.clutchQualifier.qualified} Finals Reached`
+                                  : 'No qualifications recorded'}
+                              </p>
+                            </button>
+                          </div>
+
+                          {wrappedData.topRatedPlayers.length > 1 && (
+                            <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
+                              <p className="mb-3 font-mono text-[10px] font-bold tracking-wider text-neutral-400 uppercase">
+                                Individual Rating Leaderboard
+                              </p>
+                              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                                {wrappedData.topRatedPlayers.map((tp, i) => (
+                                  <button
+                                    key={tp.player}
+                                    type="button"
+                                    onClick={() =>
+                                      setSelectedCareerPlayer(tp.player)
+                                    }
+                                    className="flex items-center justify-between rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-left hover:border-[#d4af37]/50 cursor-pointer"
+                                  >
+                                    <span className="truncate text-xs font-semibold text-white">
+                                      #{i + 1} {tp.player}
+                                    </span>
+                                    <span className="ml-2 shrink-0 font-mono text-xs font-bold text-[#f8e6a0]">
+                                      {tp.avgRating}/10
+                                    </span>
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </motion.div>
+                      )}
+
+                      {/* SLIDE 2: UNSTOPPABLE DUO */}
+                      {wrappedSlide === 2 && (
+                        <motion.div
+                          key={`wrap-2-${wrappedYear}`}
+                          initial={{ opacity: 0, x: 24 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          exit={{ opacity: 0, x: -24 }}
+                          transition={{ duration: 0.32, ease: [0.16, 1, 0.3, 1] }}
+                          className="space-y-6"
+                        >
+                          <div>
+                            <span className="font-mono text-[11px] font-bold tracking-[0.2em] text-emerald-300 uppercase">
+                              Chapter 03 · Squad Chemistry
+                            </span>
+                            <h3 className="mt-1 font-display text-3xl font-bold text-white">
+                              The Unstoppable Duo
+                            </h3>
+                          </div>
+
+                          {wrappedData.topDuo ? (
+                            <div className="rounded-2xl border border-emerald-400/40 bg-gradient-to-br from-[#0c1d18] to-[#08100d] p-6">
+                              <div className="flex flex-wrap items-center justify-between gap-3">
+                                <span className="rounded-lg border border-emerald-400/35 bg-emerald-400/10 px-3 py-1 font-mono text-[11px] font-bold text-emerald-200 uppercase">
+                                  #1 Synergy Pair · {wrappedData.label}
+                                </span>
+                                <span className="font-mono text-xs font-bold text-[#f8e6a0]">
+                                  {wrappedData.topDuo.qualRate}% Shared Qualification
+                                </span>
+                              </div>
+                              <p className="mt-4 font-display text-2xl font-bold text-white sm:text-3xl">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setSelectedCareerPlayer(
+                                      wrappedData.topDuo!.playerA
+                                    )
+                                  }
+                                  className="hover:text-[#f8e6a0] hover:underline cursor-pointer"
+                                >
+                                  {wrappedData.topDuo.playerA}
+                                </button>
+                                <span className="mx-2 text-[#d4af37]">&amp;</span>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setSelectedCareerPlayer(
+                                      wrappedData.topDuo!.playerB
+                                    )
+                                  }
+                                  className="hover:text-[#f8e6a0] hover:underline cursor-pointer"
+                                >
+                                  {wrappedData.topDuo.playerB}
+                                </button>
+                              </p>
+                              <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                                <div className="rounded-xl border border-white/10 bg-black/35 p-3 text-center">
+                                  <span className="block font-mono text-[10px] text-neutral-400 uppercase">
+                                    Shared Quizzes
+                                  </span>
+                                  <span className="font-mono text-xl font-bold text-white">
+                                    {wrappedData.topDuo.shared}
+                                  </span>
+                                </div>
+                                <div className="rounded-xl border border-[#d4af37]/30 bg-black/35 p-3 text-center">
+                                  <span className="block font-mono text-[10px] text-[#d4af37] uppercase">
+                                    Gold Together
+                                  </span>
+                                  <span className="font-mono text-xl font-bold text-[#f8e6a0]">
+                                    {wrappedData.topDuo.wins}
+                                  </span>
+                                </div>
+                                <div className="rounded-xl border border-emerald-400/25 bg-black/35 p-3 text-center">
+                                  <span className="block font-mono text-[10px] text-emerald-300 uppercase">
+                                    Top-3 Podiums
+                                  </span>
+                                  <span className="font-mono text-xl font-bold text-emerald-200">
+                                    {wrappedData.topDuo.podiums}
+                                  </span>
+                                </div>
+                                <div className="rounded-xl border border-white/10 bg-black/35 p-3 text-center">
+                                  <span className="block font-mono text-[10px] text-neutral-400 uppercase">
+                                    Duo Points
+                                  </span>
+                                  <span className="font-mono text-xl font-bold text-white">
+                                    {wrappedData.topDuo.points}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          ) : (
+                            <p className="text-sm text-neutral-400">
+                              No multi-player team combinations found in this scope.
+                            </p>
+                          )}
+
+                          {wrappedData.runnerUpDuo && (
+                            <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-xs text-neutral-300">
+                              <span className="font-mono font-bold text-[#d4af37] uppercase">
+                                Runner-Up Duo:{' '}
+                              </span>
+                              <span className="font-semibold text-white">
+                                {wrappedData.runnerUpDuo.playerA} &amp;{' '}
+                                {wrappedData.runnerUpDuo.playerB}
+                              </span>{' '}
+                              · {wrappedData.runnerUpDuo.podiums} Podiums ·{' '}
+                              {wrappedData.runnerUpDuo.wins} Gold
+                            </div>
+                          )}
+                        </motion.div>
+                      )}
+
+                      {/* SLIDE 3: STREAKS & SIGNATURE MOMENT */}
+                      {wrappedSlide === 3 && (
+                        <motion.div
+                          key={`wrap-3-${wrappedYear}`}
+                          initial={{ opacity: 0, x: 24 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          exit={{ opacity: 0, x: -24 }}
+                          transition={{ duration: 0.32, ease: [0.16, 1, 0.3, 1] }}
+                          className="space-y-6"
+                        >
+                          <div>
+                            <span className="font-mono text-[11px] font-bold tracking-[0.2em] text-[#d4af37] uppercase">
+                              Chapter 04 · Momentum &amp; Signature Victory
+                            </span>
+                            <h3 className="mt-1 font-display text-3xl font-bold text-white">
+                              Streaks &amp; Defining Stage
+                            </h3>
+                          </div>
+
+                          <div className="grid gap-4 md:grid-cols-3">
+                            <div className="rounded-2xl border border-emerald-400/35 bg-[#0b1915] p-5">
+                              <span className="font-mono text-[10px] font-bold text-emerald-300 uppercase">
+                                Best Qualification Streak
+                              </span>
+                              <p className="mt-2 font-mono text-3xl font-extrabold text-white">
+                                {wrappedData.bestQualStreak} Quizzes
+                              </p>
+                            </div>
+                            <div className="rounded-2xl border border-[#d4af37]/35 bg-[#18140b] p-5">
+                              <span className="font-mono text-[10px] font-bold text-[#f5dc82] uppercase">
+                                Unbroken Podium Run
+                              </span>
+                              <p className="mt-2 font-mono text-3xl font-extrabold text-[#f8e6a0]">
+                                {wrappedData.bestPodiumStreak} Top-3
+                              </p>
+                            </div>
+                            <div className="rounded-2xl border border-white/15 bg-white/5 p-5">
+                              <span className="font-mono text-[10px] font-bold text-neutral-300 uppercase">
+                                Top Host Arena
+                              </span>
+                              <p className="mt-2 truncate font-display text-xl font-bold text-white">
+                                {wrappedData.topHost?.host || '—'}
+                              </p>
+                              <p className="mt-1 font-mono text-xs text-neutral-400">
+                                {wrappedData.topHost
+                                  ? `${wrappedData.topHost.total} visits · ${wrappedData.topHost.wins} Gold`
+                                  : 'No host'}
+                              </p>
+                            </div>
+                          </div>
+
+                          {wrappedData.signatureQuiz && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setSelectedQuiz(wrappedData.signatureQuiz)
+                              }
+                              className="block w-full rounded-2xl border border-[#d4af37]/50 bg-gradient-to-r from-[#1d1709] via-[#101c30] to-[#0a1322] p-6 text-left transition-colors hover:border-[#f8e6a0] cursor-pointer"
+                            >
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <span className="font-mono text-[11px] font-bold tracking-wider text-[#f5dc82] uppercase">
+                                  Signature Quiz Moment (Click to inspect)
+                                </span>
+                                <span className="font-mono text-xs font-bold text-[#fde047]">
+                                  {wrappedData.signatureQuiz.rating}/10 Rating ·{' '}
+                                  {wrappedData.signatureQuiz.teamCount} Teams
+                                </span>
+                              </div>
+                              <h4 className="mt-2 font-display text-2xl font-bold text-white">
+                                {wrappedData.signatureQuiz.quizName}
+                              </h4>
+                              <p className="mt-1 text-xs text-neutral-300">
+                                {wrappedData.signatureQuiz.position === 'Not Qualified'
+                                  ? 'Not Qualified'
+                                  : `${wrappedData.signatureQuiz.position} Place`}{' '}
+                                · {wrappedData.signatureQuiz.host} (
+                                {wrappedData.signatureQuiz.yearBS} B.S.)
+                              </p>
+                              <div className="mt-3 flex flex-wrap gap-1.5">
+                                {wrappedData.signatureQuiz.players.map((pl) => (
+                                  <span
+                                    key={pl}
+                                    className="rounded-lg border border-[#d4af37]/30 bg-black/35 px-2.5 py-1 font-mono text-[11px] text-[#f5f2eb]"
+                                  >
+                                    {pl} ·{' '}
+                                    <span className="font-bold text-[#f8e6a0]">
+                                      {getPlayerQuizRating(
+                                        wrappedData.signatureQuiz!,
+                                        pl
+                                      )}
+                                      /10
+                                    </span>
+                                  </span>
+                                ))}
+                              </div>
+                            </button>
+                          )}
+                        </motion.div>
+                      )}
+
+                      {/* SLIDE 4: POSTER & EXPORT */}
+                      {wrappedSlide === 4 && (
+                        <motion.div
+                          key={`wrap-4-${wrappedYear}`}
+                          initial={{ opacity: 0, x: 24 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          exit={{ opacity: 0, x: -24 }}
+                          transition={{ duration: 0.32, ease: [0.16, 1, 0.3, 1] }}
+                          className="space-y-6"
+                        >
+                          <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+                            <div>
+                              <span className="font-mono text-[11px] font-bold tracking-[0.2em] text-[#d4af37] uppercase">
+                                Chapter 05 · Official Souvenir Poster
+                              </span>
+                              <h3 className="mt-1 font-display text-3xl font-bold text-[#f8e6a0]">
+                                {wrappedData.label} Summary Card
+                              </h3>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={downloadWrappedPoster}
+                              className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#d4af37] to-[#f0cb65] px-5 py-3 text-xs font-bold text-[#08080a] shadow-[0_10px_30px_rgba(212,175,55,0.3)] transition-transform hover:scale-[1.02] cursor-pointer"
+                            >
+                              <Download className="h-4 w-4" />
+                              <span>Download Wrapped Poster (.png)</span>
+                            </button>
+                          </div>
+
+                          <div className="rounded-2xl border-2 border-[#d4af37]/50 bg-gradient-to-br from-[#0e1b2f] via-[#0b0c10] to-[#171209] p-6 sm:p-8">
+                            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#d4af37]/25 pb-4">
+                              <div>
+                                <p className="font-mono text-[10px] tracking-[0.22em] text-[#d4af37] uppercase">
+                                  District Quiz Royale · Wrapped Archive
+                                </p>
+                                <p className="mt-1 font-display text-2xl font-bold text-white">
+                                  {wrappedData.label}
+                                </p>
+                              </div>
+                              <div className="flex gap-3 font-mono text-xs">
+                                <span className="rounded-lg border border-[#d4af37]/35 bg-[#d4af37]/15 px-3 py-1.5 font-bold text-[#f8e6a0]">
+                                  {wrappedData.first} Gold
+                                </span>
+                                <span className="rounded-lg border border-emerald-400/30 bg-emerald-500/10 px-3 py-1.5 font-bold text-emerald-200">
+                                  {wrappedData.qualRate}% Qual
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                              <div className="rounded-xl border border-white/10 bg-black/35 p-4">
+                                <span className="font-mono text-[10px] text-neutral-400 uppercase">
+                                  Points Sovereign
+                                </span>
+                                <p className="mt-1 font-display text-lg font-bold text-[#f8e6a0]">
+                                  {wrappedData.pointsLeader?.player || '—'}
+                                </p>
+                                <p className="mt-0.5 font-mono text-[11px] text-neutral-300">
+                                  {wrappedData.pointsLeader
+                                    ? `${wrappedData.pointsLeader.points} pts`
+                                    : '—'}
+                                </p>
+                              </div>
+
+                              <div className="rounded-xl border border-white/10 bg-black/35 p-4">
+                                <span className="font-mono text-[10px] text-sky-300 uppercase">
+                                  Top Rated Player
+                                </span>
+                                <p className="mt-1 font-display text-lg font-bold text-white">
+                                  {wrappedData.topRatedPlayer?.player || '—'}
+                                </p>
+                                <p className="mt-0.5 font-mono text-[11px] text-sky-200">
+                                  {wrappedData.topRatedPlayer
+                                    ? `${wrappedData.topRatedPlayer.avgRating}/10 Avg Rating`
+                                    : '—'}
+                                </p>
+                              </div>
+
+                              <div className="rounded-xl border border-white/10 bg-black/35 p-4">
+                                <span className="font-mono text-[10px] text-emerald-300 uppercase">
+                                  Unstoppable Duo
+                                </span>
+                                <p className="mt-1 font-display text-base font-bold text-white">
+                                  {wrappedData.topDuo
+                                    ? `${wrappedData.topDuo.playerA} & ${wrappedData.topDuo.playerB}`
+                                    : '—'}
+                                </p>
+                                <p className="mt-0.5 font-mono text-[11px] text-emerald-200">
+                                  {wrappedData.topDuo
+                                    ? `${wrappedData.topDuo.podiums} Podiums`
+                                    : '—'}
+                                </p>
+                              </div>
+
+                              <div className="rounded-xl border border-white/10 bg-black/35 p-4">
+                                <span className="font-mono text-[10px] text-amber-300 uppercase">
+                                  Signature Quiz
+                                </span>
+                                <p className="mt-1 truncate font-display text-base font-bold text-white">
+                                  {wrappedData.signatureQuiz?.quizName || '—'}
+                                </p>
+                                <p className="mt-0.5 font-mono text-[11px] text-neutral-300">
+                                  {wrappedData.signatureQuiz
+                                    ? `${wrappedData.signatureQuiz.position} · ${wrappedData.signatureQuiz.rating}/10`
+                                    : '—'}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                </div>
+              )}
+            </motion.div>
+          )}
         </AnimatePresence>
       </div>
 
@@ -3013,22 +4203,28 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
                 <div className="rounded-xl border border-white/10 bg-[#0b2340] p-4">
                   <div className="flex items-center gap-2 text-xs font-medium text-[#d4af37]">
                     <Users className="h-4 w-4" />
-                    <span>Participating Players</span>
+                    <span>Participating Players &amp; Individual Ratings</span>
                   </div>
                   <div className="mt-2 flex flex-wrap gap-1.5">
-                    {selectedQuiz.players.map((pl) => (
-                      <button
-                        key={pl}
-                        type="button"
-                        onClick={() => {
-                          setSelectedQuiz(null);
-                          setSelectedCareerPlayer(pl.trim());
-                        }}
-                        className="rounded-lg border border-[#d4af37]/30 bg-[#08192f] px-2.5 py-1 text-xs font-medium text-[#f5f5f0] transition-colors hover:border-[#f0cb65] hover:text-[#f8e6a0] cursor-pointer"
-                      >
-                        {pl}
-                      </button>
-                    ))}
+                    {selectedQuiz.players.map((pl) => {
+                      const pRating = getPlayerQuizRating(selectedQuiz, pl);
+                      return (
+                        <button
+                          key={pl}
+                          type="button"
+                          onClick={() => {
+                            setSelectedQuiz(null);
+                            setSelectedCareerPlayer(pl.trim());
+                          }}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-[#d4af37]/30 bg-[#08192f] px-2.5 py-1 text-xs font-medium text-[#f5f5f0] transition-colors hover:border-[#f0cb65] hover:text-[#f8e6a0] cursor-pointer"
+                        >
+                          <span>{pl}</span>
+                          <span className="rounded bg-[#d4af37]/20 px-1.5 py-0.5 font-mono text-[10px] font-bold text-[#f8e6a0]">
+                            {pRating}/10
+                          </span>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
 
@@ -3040,6 +4236,18 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
                   <p className="mt-1.5 font-mono text-sm font-bold text-[#f8e6a0]">
                     {selectedQuiz.rating} / 10
                   </p>
+                  {selectedQuiz.players.length > 0 && (
+                    <p className="mt-1 font-mono text-[11px] text-neutral-300">
+                      Squad Avg:{' '}
+                      {(
+                        selectedQuiz.players.reduce(
+                          (acc, pl) => acc + getPlayerQuizRating(selectedQuiz, pl),
+                          0
+                        ) / selectedQuiz.players.length
+                      ).toFixed(1)}{' '}
+                      / 10
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -3219,6 +4427,9 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
                       {careerProfile.activeYears.length > 0
                         ? `Active Seasons: ${careerProfile.activeYears.join(' · ')} B.S.`
                         : 'No recorded seasons'}
+                      {careerProfile.totalQuizzes > 0
+                        ? ` · Avg Rating: ${careerProfile.avgRating}/10`
+                        : ''}
                     </p>
                   </div>
                 </div>
@@ -3292,12 +4503,15 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
                     </span>
                   </p>
                 </div>
-                <div className="rounded-2xl border border-[#f5dc82]/35 bg-[#1d1708] p-4">
-                  <p className="font-mono text-[10px] tracking-wider text-[#f5dc82] uppercase">
-                    Gold Wins (1st)
+                <div className="rounded-2xl border border-sky-400/35 bg-[#0e1b2e] p-4">
+                  <p className="font-mono text-[10px] tracking-wider text-sky-300 uppercase">
+                    Avg Player Rating
                   </p>
-                  <p className="mt-1.5 font-mono text-2xl font-bold text-[#fff2b8]">
-                    {careerProfile.first}
+                  <p className="mt-1.5 font-mono text-2xl font-bold text-sky-100">
+                    {careerProfile.avgRating}
+                    <span className="ml-1 text-xs font-normal text-sky-300/80">
+                      / 10
+                    </span>
                   </p>
                 </div>
               </div>
@@ -3453,23 +4667,28 @@ export function HallOfFame({ bsYears, quizzes, gallery }: HallOfFameProps) {
                           </p>
                         </div>
                       </div>
-                      <span
-                        className={`shrink-0 rounded-lg border px-2.5 py-1 font-mono text-[11px] font-bold ${
-                          qz.position === '1st'
-                            ? 'border-[#d4af37]/50 bg-[#d4af37]/15 text-[#f8e6a0]'
-                            : qz.position === '2nd'
-                              ? 'border-slate-300/40 bg-slate-300/10 text-slate-200'
-                              : qz.position === '3rd'
-                                ? 'border-[#b86b35]/50 bg-[#b86b35]/15 text-[#f5c08D]'
-                                : qz.position === 'Not Qualified'
-                                  ? 'border-white/15 bg-white/5 text-neutral-400'
-                                  : 'border-emerald-400/30 bg-emerald-400/10 text-emerald-200'
-                        }`}
-                      >
-                        {qz.position === 'Not Qualified'
-                          ? 'NQ'
-                          : qz.position}
-                      </span>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <span className="rounded-lg border border-sky-400/30 bg-sky-500/10 px-2 py-1 font-mono text-[11px] font-bold text-sky-200">
+                          {getPlayerQuizRating(qz, careerProfile.name)}/10
+                        </span>
+                        <span
+                          className={`rounded-lg border px-2.5 py-1 font-mono text-[11px] font-bold ${
+                            qz.position === '1st'
+                              ? 'border-[#d4af37]/50 bg-[#d4af37]/15 text-[#f8e6a0]'
+                              : qz.position === '2nd'
+                                ? 'border-slate-300/40 bg-slate-300/10 text-slate-200'
+                                : qz.position === '3rd'
+                                  ? 'border-[#b86b35]/50 bg-[#b86b35]/15 text-[#f5c08D]'
+                                  : qz.position === 'Not Qualified'
+                                    ? 'border-white/15 bg-white/5 text-neutral-400'
+                                    : 'border-emerald-400/30 bg-emerald-400/10 text-emerald-200'
+                          }`}
+                        >
+                          {qz.position === 'Not Qualified'
+                            ? 'NQ'
+                            : qz.position}
+                        </span>
+                      </div>
                     </button>
                   ))}
                 </div>
